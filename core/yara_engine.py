@@ -30,7 +30,7 @@ class YaraEngine:
 
     async def scan_file_async(self, filepath):
         loop = asyncio.get_running_loop()
-        with concurrent.futures.ProcessPoolExecutor() as pool:
+        with concurrent.futures.ThreadPoolExecutor() as pool:
             return await loop.run_in_executor(pool, self.scan_file, filepath)
 
     def scan_memory(self, dump_path):
