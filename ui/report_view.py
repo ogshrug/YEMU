@@ -3,7 +3,10 @@ from gi.repository import Gtk, Adw
 class ReportView(Gtk.Box):
     def __init__(self, **kwargs):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10, **kwargs)
-        self.set_margin_all(20)
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_margin_top(20)
+        self.set_margin_bottom(20)
 
         self.append(Gtk.Label(label="Analysis Report Details"))
 

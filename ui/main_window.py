@@ -42,7 +42,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         # File Drop/Upload
         upload_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        upload_box.set_margin_all(10)
+        upload_box.set_margin_start(10)
+        upload_box.set_margin_end(10)
+        upload_box.set_margin_top(10)
+        upload_box.set_margin_bottom(10)
         upload_box.set_halign(Gtk.Align.CENTER)
 
         self.upload_btn = Gtk.Button(label="Submit File for Analysis")
