@@ -71,5 +71,9 @@ class Orchestrator:
         except Exception as e:
             self.logger.error(f"Analysis failed: {e}")
             await self.db.add_event(analysis_id, "error", 0, "CRITICAL", {"error": str(e)})
+            try:
+                await self.vm_manager.stop_vm(guest_os)
+            except Exception as stop_err:
+                self.logger.error(f"Failed to stop VM after analysis error: {stop_err}")
 
         return analysis_id
