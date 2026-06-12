@@ -1,4 +1,4 @@
-from gi.repository import Gtk, Adw, Gio
+from gi.repository import Gtk, Adw, Gio, GLib
 from ui.dashboard import Dashboard
 from ui.log_viewer import LogViewer
 from ui.yara_editor import YaraEditor
