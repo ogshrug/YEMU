@@ -10,7 +10,7 @@ class Orchestrator:
         self.vm_manager = vm_manager or VMManager(use_mock=True)
         self.logger = logging.getLogger(__name__)
 
-    async def run_analysis(self, sample_path, guest_os="ubuntu"):
+    async def run_analysis(self, sample_path, guest_os="ubuntu-clean"):
         self.logger.info(f"Starting analysis for {sample_path} on {guest_os}")
 
         # 0. Static Analysis
