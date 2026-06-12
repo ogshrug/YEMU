@@ -2,6 +2,7 @@ import yara
 import os
 import logging
 import concurrent.futures
+import asyncio
 
 class YaraEngine:
     def __init__(self, rules_path="rules/default.yar"):
