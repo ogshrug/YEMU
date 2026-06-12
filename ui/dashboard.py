@@ -48,5 +48,6 @@ class Dashboard(Gtk.Box):
         return card
 
     def update_data(self, score, yara_count, ioc_count):
-        # Update labels (in a real app, keep references to value labels)
-        pass
+        self.score_card.get_last_child().set_label(str(score))
+        self.yara_card.get_last_child().set_label(str(yara_count))
+        self.ioc_card.get_last_child().set_label(str(ioc_count))
