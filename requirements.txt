@@ -1,0 +1,8 @@
+yara-python
+libvirt-python
+aiosqlite
+python-magic
+reportlab
+scapy
+PyGObject
+requests
