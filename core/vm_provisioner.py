@@ -45,6 +45,13 @@ class VMProvisioner:
         return target_path
 
     def get_libvirt_xml(self, distro_name, vm_name, ram_mb=2048, cpu_count=2):
+        if distro_name not in self.DISTROS:
+            raise ValueError(f"Unknown distro: {distro_name}")
+
+        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        if not vm_name or any(c not in allowed for c in vm_name):
+            raise ValueError("vm_name contains invalid characters")
+
         # Template for creating a new VM
         return f"""
         <domain type='kvm'>
