@@ -231,3 +231,36 @@ class VMManager:
         except Exception as e:
             self.logger.error(f"run_command failed: {e}")
             return ""
+
+    async def verify_environment(self, vm_name):
+        try:
+            conn = self._get_conn()
+            if not conn.isAlive():
+                return False, "Libvirt connection is not alive"
+            dom = self._get_domain(vm_name)
+            if not dom:
+                return False, f"VM {vm_name} not found"
+            return True, "OK"
+        except Exception as e:
+            return False, str(e)
+
+    async def revert_to_snapshot(self, vm_name, snapshot_name="clean-baseline"):
+        dom = self._get_domain(vm_name)
+        if not dom:
+            raise RuntimeError(f"VM {vm_name} not found")
+        try:
+            snap = dom.snapshotLookupByName(snapshot_name)
+            dom.revertToSnapshot(snap)
+            return True
+        except libvirt.libvirtError as e:
+            self.logger.error(f"Failed to revert to snapshot {snapshot_name}: {e}")
+            raise RuntimeError(f"Failed to revert to snapshot: {e}")
+
+    async def open_gui(self, vm_name):
+        self.logger.info(f"Opening GUI for {vm_name}")
+        try:
+            subprocess.Popen(["virt-viewer", "-c", "qemu:///system", "--attach", vm_name])
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to open GUI: {e}")
+            return False

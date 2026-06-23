@@ -15,8 +15,8 @@ class Orchestrator:
         if self.ui_callback:
             self.ui_callback(message, severity)
 
-    async def run_analysis(self, sample_path, guest_os="ubuntu-clean"):
-        self.logger.info(f"Starting analysis for {sample_path} on {guest_os}")
+    async def run_analysis(self, sample_path, guest_os="ubuntu-clean", run_gui=False):
+        self.logger.info(f"Starting analysis for {sample_path} on {guest_os} (GUI: {run_gui})")
         self._notify_ui(f"Starting analysis on {guest_os}...")
 
         # 0. Static Analysis
@@ -48,14 +48,18 @@ class Orchestrator:
             await self.vm_manager.revert_to_snapshot(guest_os)
 
             self._notify_ui("Injecting sample into VM...")
-            # We explicitly tell VMManager to name it 'sample' in /tmp
-            guest_sample_path = "/tmp/sample"
+            # We explicitly tell VMManager to name it 'malware_sample' in /
+            guest_sample_path = "/malware_sample"
             await self.vm_manager.inject_file(guest_os, sample_path, guest_sample_path)
 
             self._notify_ui("Starting VM and waiting for guest agent...")
             started = await self.vm_manager.start_vm(guest_os)
             if not started:
                 raise RuntimeError("Failed to start VM or guest agent timed out.")
+
+            if run_gui:
+                self._notify_ui("Opening VM GUI...")
+                await self.vm_manager.open_gui(guest_os)
 
             # 4. Execute with monitoring
             self._notify_ui("Executing sample with strace monitoring...")
