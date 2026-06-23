@@ -26,6 +26,26 @@ class VMManager:
         except libvirt.libvirtError:
             return None
 
+    def list_vms(self):
+        try:
+            conn = self._get_conn()
+            domains = conn.listAllDomains(0)
+            return [dom.name() for dom in domains]
+        except libvirt.libvirtError as e:
+            self.logger.error(f"Failed to list VMs: {e}")
+            return []
+
+    def list_snapshots(self, vm_name):
+        dom = self._get_domain(vm_name)
+        if not dom:
+            return []
+        try:
+            snapshots = dom.listAllSnapshots(0)
+            return [snap.getName() for snap in snapshots]
+        except libvirt.libvirtError as e:
+            self.logger.error(f"Failed to list snapshots for {vm_name}: {e}")
+            return []
+
     def _remove_existing_domain(self, vm_name):
         dom = self._get_domain(vm_name)
         if dom is None:
