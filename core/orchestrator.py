@@ -5,18 +5,27 @@ from datetime import datetime
 from core.vm_manager import VMManager
 
 class Orchestrator:
-    def __init__(self, db, vm_manager=None):
+    def __init__(self, db, vm_manager=None, ui_callback=None):
         self.db = db
-        self.vm_manager = vm_manager or VMManager(use_mock=True)
+        self.vm_manager = vm_manager or VMManager()
         self.logger = logging.getLogger(__name__)
+        self.ui_callback = ui_callback
+
+    def _notify_ui(self, message, severity="INFO"):
+        if self.ui_callback:
+            self.ui_callback(message, severity)
 
     async def run_analysis(self, sample_path, guest_os="ubuntu-clean"):
         self.logger.info(f"Starting analysis for {sample_path} on {guest_os}")
+        self._notify_ui(f"Starting analysis on {guest_os}...")
 
         # 0. Static Analysis
         from core.yara_engine import YaraEngine
         yara = YaraEngine()
-        matches = yara.scan_file(sample_path)
+        self._notify_ui("Running YARA static analysis...")
+        matches = await yara.scan_file_async(sample_path)
+        for match in matches:
+            self._notify_ui(f"YARA Match: {match}", "WARN")
 
         # 1. Prepare Sample metadata
         import hashlib
@@ -29,21 +38,34 @@ class Orchestrator:
         analysis_id = await self.db.create_analysis(sample_id, datetime.now())
 
         try:
-            # 2. Reset VM
-            await self.vm_manager.revert_to_snapshot(guest_os)
-            await self.vm_manager.start_vm(guest_os)
+            # 2. Verify and Reset VM
+            self._notify_ui("Verifying VM environment...")
+            ok, msg = await self.vm_manager.verify_environment(guest_os)
+            if not ok:
+                raise RuntimeError(msg)
 
-            # 3. Inject sample
-            await self.vm_manager.inject_file(guest_os, sample_path, "/tmp/sample")
+            self._notify_ui("Reverting VM to clean snapshot...")
+            await self.vm_manager.revert_to_snapshot(guest_os)
+
+            self._notify_ui("Injecting sample into VM...")
+            # We explicitly tell VMManager to name it 'sample' in /tmp
+            guest_sample_path = "/tmp/sample"
+            await self.vm_manager.inject_file(guest_os, sample_path, guest_sample_path)
+
+            self._notify_ui("Starting VM and waiting for guest agent...")
+            started = await self.vm_manager.start_vm(guest_os)
+            if not started:
+                raise RuntimeError("Failed to start VM or guest agent timed out.")
 
             # 4. Execute with monitoring
+            self._notify_ui("Executing sample with strace monitoring...")
             await self.db.add_event(analysis_id, "process", 0.1, "INFO", {"msg": "Execution started"})
 
-            # Start strace in background if possible, or just wrap execution
-            strace_cmd = "chmod +x /tmp/sample && strace -tt -o /tmp/strace.log /tmp/sample"
+            strace_cmd = f"chmod +x {guest_sample_path} && strace -tt -o /tmp/strace.log {guest_sample_path}"
             await self.vm_manager.run_command(guest_os, strace_cmd)
 
             # 5. Collect and Parse results
+            self._notify_ui("Collecting behavioral logs...")
             strace_log = await self.vm_manager.run_command(guest_os, "cat /tmp/strace.log")
             from core.behaviour_monitor import BehaviourMonitor
             monitor = BehaviourMonitor()
@@ -51,8 +73,10 @@ class Orchestrator:
 
             for ev in events:
                 await self.db.add_event(analysis_id, ev['type'], 0, "WARN", ev)
+                self._notify_ui(f"Behavior: {ev.get('syscall', 'unknown')}", "WARN")
 
             # 6. Threat Scoring
+            self._notify_ui("Computing threat score...")
             from core.threat_scorer import ThreatScorer
             scorer = ThreatScorer()
             findings = {
@@ -61,15 +85,15 @@ class Orchestrator:
             }
             score = scorer.compute(findings)
             verdict = scorer.get_verdict(score)
-
-            # Update analysis record
-            # (Requires a method in Database to update analysis)
+            self._notify_ui(f"Analysis complete. Verdict: {verdict} (Score: {score})", "CRITICAL" if score > 70 else "INFO")
 
             # 7. Cleanup
+            self._notify_ui("Cleaning up VM...")
             await self.vm_manager.stop_vm(guest_os)
 
         except Exception as e:
             self.logger.error(f"Analysis failed: {e}")
+            self._notify_ui(f"Error: {str(e)}", "CRITICAL")
             await self.db.add_event(analysis_id, "error", 0, "CRITICAL", {"error": str(e)})
             try:
                 await self.vm_manager.stop_vm(guest_os)

@@ -3,10 +3,18 @@ from ui.dashboard import Dashboard
 from ui.log_viewer import LogViewer
 from ui.yara_editor import YaraEditor
 from ui.report_view import ReportView
+import os
 
 class MainWindow(Adw.ApplicationWindow):
     def _on_submit_clicked(self, btn):
+        # In a real scenario, this would be a file chooser dialog
+        # For now, let's assume a default path or a simple file existence check
         filename = "malicious_sample.elf"
+        if not os.path.exists(filename):
+            # Create a dummy file if it doesn't exist for testing purposes
+            with open(filename, "wb") as f:
+                f.write(b"\x7fELF" + os.urandom(100))
+
         self._append_log(f"Submitting {filename}...", "INFO")
 
         import threading
@@ -14,7 +22,7 @@ class MainWindow(Adw.ApplicationWindow):
         def run_async():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.orchestrator.run_mock_analysis(filename))
+            loop.run_until_complete(self.orchestrator.run_analysis(filename))
             GLib.idle_add(self._on_analysis_complete)
 
         threading.Thread(target=run_async, daemon=True).start()
@@ -90,14 +98,14 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Database and Orchestrator
         from storage.db import Database
-        from core.mock_orchestrator import MockOrchestrator
+        from core.orchestrator import Orchestrator
         import asyncio
 
         self.db = Database()
         # Note: In a real app, wrap the async init in a way GTK likes
         GLib.idle_add(lambda: asyncio.run(self.db.connect()))
 
-        self.orchestrator = MockOrchestrator(self.db, ui_callback=self._append_log)
+        self.orchestrator = Orchestrator(self.db, ui_callback=self._append_log)
 
         # Stack Switcher in Header
         switcher = Gtk.StackSwitcher()
