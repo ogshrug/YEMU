@@ -15,9 +15,9 @@ class Orchestrator:
         if self.ui_callback:
             self.ui_callback(message, severity)
 
-    async def run_analysis(self, sample_path, guest_os="ubuntu-clean", run_gui=False):
-        self.logger.info(f"Starting analysis for {sample_path} on {guest_os} (GUI: {run_gui})")
-        self._notify_ui(f"Starting analysis on {guest_os}...")
+    async def run_analysis(self, sample_path, guest_os="ubuntu-clean", snapshot_name="clean-baseline", run_gui=False):
+        self.logger.info(f"Starting analysis for {sample_path} on {guest_os} (Snapshot: {snapshot_name}, GUI: {run_gui})")
+        self._notify_ui(f"Starting analysis on {guest_os} (Snapshot: {snapshot_name})...")
 
         # 0. Static Analysis
         from core.yara_engine import YaraEngine
@@ -44,8 +44,8 @@ class Orchestrator:
             if not ok:
                 raise RuntimeError(msg)
 
-            self._notify_ui("Reverting VM to clean snapshot...")
-            await self.vm_manager.revert_to_snapshot(guest_os)
+            self._notify_ui(f"Reverting VM to snapshot {snapshot_name}...")
+            await self.vm_manager.revert_to_snapshot(guest_os, snapshot_name=snapshot_name)
 
             self._notify_ui("Injecting sample into VM...")
             # We explicitly tell VMManager to name it 'malware_sample' in /
