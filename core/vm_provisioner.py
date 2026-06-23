@@ -4,11 +4,9 @@ import logging
 import yaml
 import tempfile
 import subprocess
+import shutil
 
 class VMProvisioner:
-    """
-    Handles downloading ISOs/Cloud images and providing templates for VM creation.
-    """
     DISTROS = {
         "ubuntu": "https://releases.ubuntu.com/24.04/ubuntu-24.04.1-live-server-amd64.iso",
         "mint": "https://mirrors.layeronline.com/linuxmint/stable/22/linuxmint-22-cinnamon-64bit.iso",
@@ -22,13 +20,29 @@ class VMProvisioner:
     }
 
     VIRTIO_WIN_URL = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso"
-
     PROCMON_URL = "https://download.sysinternals.com/files/ProcessMonitor.zip"
 
-    def __init__(self, download_dir="assets/iso"):
+    def __init__(self, download_dir=None):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        if not download_dir:
+            download_dir = os.path.join(root, "assets", "iso")
+            if not os.path.exists(download_dir):
+                try:
+                    os.makedirs(download_dir, exist_ok=True)
+                except PermissionError:
+                    download_dir = os.path.join("/var/tmp", "gpcssi-assets")
+                    os.makedirs(download_dir, exist_ok=True)
+            else:
+                test_file = os.path.join(download_dir, ".write_test")
+                try:
+                    with open(test_file, "w") as f:
+                        f.write("test")
+                    os.remove(test_file)
+                except (PermissionError, OSError):
+                    download_dir = os.path.join("/var/tmp", "gpcssi-assets")
+                    os.makedirs(download_dir, exist_ok=True)
         self.download_dir = download_dir
         self.logger = logging.getLogger(__name__)
-        os.makedirs(self.download_dir, exist_ok=True)
 
     def download_file(self, url, filename=None):
         if not filename:
@@ -50,7 +64,6 @@ class VMProvisioner:
         except Exception as e:
             self.logger.error(f"Download failed: {e}")
             raise
-
         return target_path
 
     def download_iso(self, distro_name):
@@ -69,38 +82,71 @@ class VMProvisioner:
     def download_procmon(self):
         return self.download_file(self.PROCMON_URL, "ProcessMonitor.zip")
 
+    @staticmethod
+    def _find_mkisofs():
+        for exe in ["genisoimage", "mkisofs", "xorrisofs"]:
+            path = shutil.which(exe)
+            if path:
+                return path
+        raise FileNotFoundError(
+            "Neither genisoimage, mkisofs, nor xorrisofs found. "
+            "Install one: sudo apt install genisoimage"
+        )
+
     def create_cloud_init_iso(self, vm_name, user_data_content):
-        """Creates a cloud-init ISO containing user-data and meta-data."""
+        mkisofs = self._find_mkisofs()
         with tempfile.TemporaryDirectory() as tmpdir:
             user_data_path = os.path.join(tmpdir, "user-data")
             meta_data_path = os.path.join(tmpdir, "meta-data")
-
             with open(user_data_path, "w") as f:
                 f.write("#cloud-config\n" + user_data_content)
-
             with open(meta_data_path, "w") as f:
                 f.write(f"instance-id: {vm_name}\nlocal-hostname: {vm_name}\n")
-
-            iso_path = os.path.join(self.download_dir, f"{vm_name}-cloud-init.iso")
-            cmd = ["genisoimage", "-output", iso_path, "-volid", "cidata", "-joliet", "-rock", user_data_path, meta_data_path]
-            subprocess.run(cmd, check=True, capture_output=True)
-            return iso_path
+            iso_path = os.path.join(tmpdir, f"{vm_name}-cloud-init.iso")
+            cmd = [mkisofs, "-output", iso_path, "-volid", "cidata", "-joliet", "-rock", user_data_path, meta_data_path]
+            result = subprocess.run(cmd, check=False, capture_output=True)
+            if result.returncode != 0:
+                stderr = result.stderr.decode(errors="replace")
+                self.logger.error(f"mkisofs failed (exit {result.returncode}): {stderr}")
+                raise RuntimeError(
+                    f"mkisofs failed (exit {result.returncode}): {stderr}"
+                )
+            out_path = os.path.join(self.download_dir, f"{vm_name}-cloud-init.iso")
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                except PermissionError:
+                    out_path = os.path.join(
+                        os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+                        "gpcssi", f"{vm_name}-cloud-init.iso"
+                    )
+                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            shutil.move(iso_path, out_path)
+            os.chmod(out_path, 0o644)
+            return out_path
 
     def create_windows_auto_iso(self, vm_name):
-        """Creates an ISO for Windows containing Autounattend.xml."""
+        mkisofs = self._find_mkisofs()
         xml_content = self.generate_autounattend_xml()
         with tempfile.TemporaryDirectory() as tmpdir:
             xml_path = os.path.join(tmpdir, "Autounattend.xml")
             with open(xml_path, "w") as f:
                 f.write(xml_content)
-
+            tmp_iso = os.path.join(tmpdir, f"{vm_name}-windows-auto.iso")
+            cmd = [mkisofs, "-output", tmp_iso, "-volid", "OEMDRIVERS", "-joliet", "-rock", xml_path]
+            result = subprocess.run(cmd, check=False, capture_output=True)
+            if result.returncode != 0:
+                stderr = result.stderr.decode(errors="replace")
+                self.logger.error(f"mkisofs failed (exit {result.returncode}): {stderr}")
+                raise RuntimeError(
+                    f"mkisofs failed (exit {result.returncode}): {stderr}"
+                )
             iso_path = os.path.join(self.download_dir, f"{vm_name}-windows-auto.iso")
-            cmd = ["genisoimage", "-output", iso_path, "-volid", "OEMDRIVERS", "-joliet", "-rock", xml_path]
-            subprocess.run(cmd, check=True, capture_output=True)
+            shutil.move(tmp_iso, iso_path)
+            os.chmod(iso_path, 0o644)
             return iso_path
 
     def get_default_user_data(self):
-        """Standard cloud-init configuration for the sandbox."""
         config = {
             "package_update": True,
             "package_upgrade": True,
@@ -115,7 +161,6 @@ class VMProvisioner:
         return yaml.dump(config)
 
     def generate_autounattend_xml(self):
-        """Improved Autounattend.xml for Windows automated install with partitioning and drivers."""
         return """<?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
     <settings pass="windowsPE">
@@ -168,7 +213,7 @@ class VMProvisioner:
             </UserData>
             <DriverPaths>
                 <PathAndCredentials wcm:action="add">
-                    <Path>E:\amd64\w11</Path>
+                    <Path>E:\\amd64\\w11</Path>
                 </PathAndCredentials>
             </DriverPaths>
         </component>
@@ -208,7 +253,7 @@ class VMProvisioner:
             </AutoLogon>
             <FirstLogonCommands>
                 <SynchronousCommand wcm:action="add">
-                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Get-ChildItem -Path D:\, E:\, F:\ -Include virtio-win-guest-tools.exe -Recurse | ForEach-Object { & $_ /S }"</CommandLine>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Get-ChildItem -Path D:\\, E:\\, F:\\ -Include virtio-win-guest-tools.exe -Recurse | ForEach-Object { & $_ /S }"</CommandLine>
                     <Description>Install VirtIO Guest Tools (includes Guest Agent)</Description>
                     <Order>1</Order>
                 </SynchronousCommand>
@@ -263,7 +308,7 @@ class VMProvisioner:
           <memory unit='MiB'>{ram_mb}</memory>
           <vcpu placement='static'>{cpu_count}</vcpu>
           <os>
-            <type arch='x86_64' machine='pc-q35-4.2'>hvm</type>
+            <type arch='x86_64' machine='q35'>hvm</type>
             <boot dev='hd'/>
             <boot dev='cdrom'/>
           </os>

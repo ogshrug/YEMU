@@ -3,8 +3,8 @@ from ui.dashboard import Dashboard
 from ui.log_viewer import LogViewer
 from ui.yara_editor import YaraEditor
 from ui.report_view import ReportView
-from ui.prepare_vm_gui import VMPrepareWindow
 import os
+import subprocess
 
 class MainWindow(Adw.ApplicationWindow):
     def _on_submit_clicked(self, btn):
@@ -34,8 +34,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.dashboard.update_data(87, 4, 12)
 
     def _on_prepare_vm_clicked(self, btn):
-        win = VMPrepareWindow(parent=self)
-        win.present()
+        script = os.path.join(os.path.dirname(__file__), "prepare_vm.sh")
+        subprocess.Popen(["bash", script], cwd=os.path.dirname(script))
 
     def _append_log(self, msg, sev):
         GLib.idle_add(self.log_viewer.append_log, msg, sev)
