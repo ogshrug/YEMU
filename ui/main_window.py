@@ -8,14 +8,25 @@ import subprocess
 
 class MainWindow(Adw.ApplicationWindow):
     def _on_submit_clicked(self, btn):
-        # In a real scenario, this would be a file chooser dialog
-        # For now, let's assume a default path or a simple file existence check
-        filename = "malicious_sample.elf"
-        if not os.path.exists(filename):
-            # Create a dummy file if it doesn't exist for testing purposes
-            with open(filename, "wb") as f:
-                f.write(b"\x7fELF" + os.urandom(100))
+        dialog = Gtk.FileChooserDialog(
+            title="Select File for Analysis",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        dialog.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("_Open", Gtk.ResponseType.ACCEPT)
 
+        dialog.connect("response", self._on_file_chooser_response)
+        dialog.present()
+
+    def _on_file_chooser_response(self, dialog, response):
+        if response == Gtk.ResponseType.ACCEPT:
+            file_path = dialog.get_file().get_path()
+            run_gui = self.gui_switch.get_active()
+            self._start_analysis(file_path, run_gui)
+        dialog.destroy()
+
+    def _start_analysis(self, filename, run_gui):
         self._append_log(f"Submitting {filename}...", "INFO")
 
         import threading
@@ -23,7 +34,7 @@ class MainWindow(Adw.ApplicationWindow):
         def run_async():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.orchestrator.run_analysis(filename))
+            loop.run_until_complete(self.orchestrator.run_analysis(filename, run_gui=run_gui))
             GLib.idle_add(self._on_analysis_complete)
 
         threading.Thread(target=run_async, daemon=True).start()
@@ -65,6 +76,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.upload_btn.add_css_class("suggested-action")
         self.upload_btn.connect("clicked", self._on_submit_clicked)
         upload_box.append(self.upload_btn)
+
+        gui_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        gui_box.set_valign(Gtk.Align.CENTER)
+        gui_label = Gtk.Label(label="Run with GUI")
+        self.gui_switch = Gtk.CheckButton()
+        gui_box.append(gui_label)
+        gui_box.append(self.gui_switch)
+        upload_box.append(gui_box)
 
         self.prepare_btn = Gtk.Button(label="Prepare New VM")
         self.prepare_btn.connect("clicked", self._on_prepare_vm_clicked)
@@ -108,13 +127,18 @@ class MainWindow(Adw.ApplicationWindow):
         # Database and Orchestrator
         from storage.db import Database
         from core.orchestrator import Orchestrator
+        import threading
         import asyncio
 
         self.db = Database()
-        # Note: In a real app, wrap the async init in a way GTK likes
-        GLib.idle_add(lambda: asyncio.run(self.db.connect()))
-
         self.orchestrator = Orchestrator(self.db, ui_callback=self._append_log)
+
+        def init_db():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.db.connect())
+
+        threading.Thread(target=init_db, daemon=True).start()
 
         # Stack Switcher in Header
         switcher = Gtk.StackSwitcher()
