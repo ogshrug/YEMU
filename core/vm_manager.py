@@ -26,8 +26,89 @@ class VMManager:
         try:
             return self.conn.lookupByName(vm_name)
         except libvirt.libvirtError:
-            self.logger.error(f"Domain {vm_name} not found.")
+            self.logger.debug(f"Domain {vm_name} not found.")
             return None
+
+    async def ensure_network(self, network_name="malware-analysis"):
+        """Ensures the isolated network exists and is active."""
+        try:
+            net = self.conn.networkLookupByName(network_name)
+            if not net.isActive():
+                net.create()
+            return True
+        except libvirt.libvirtError:
+            self.logger.info(f"Network {network_name} not found. Creating...")
+            xml = f"""
+            <network>
+              <name>{network_name}</name>
+              <bridge name='virbr-malware' stp='on' delay='0'/>
+              <ip address='192.168.100.1' netmask='255.255.255.0'>
+              </ip>
+            </network>
+            """
+            try:
+                net = self.conn.networkDefineXML(xml)
+                net.setAutostart(True)
+                net.create()
+                return True
+            except libvirt.libvirtError as e:
+                self.logger.error(f"Failed to create network: {e}")
+                return False
+
+    async def create_disk(self, disk_path, size_gb, backing_file=None):
+        """Creates a qcow2 disk image."""
+        # Ensure target directory exists
+        os.makedirs(os.path.dirname(disk_path), exist_ok=True)
+
+        cmd = ["qemu-img", "create", "-f", "qcow2"]
+        if backing_file:
+            # When using a backing file (cloud image), we create a COW layer
+            cmd += ["-b", backing_file, "-F", "qcow2", disk_path, f"{size_gb}G"]
+        else:
+            cmd += [disk_path, f"{size_gb}G"]
+
+        try:
+            process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                self.logger.error(f"qemu-img failed: {stderr.decode()}")
+                # Fallback to a user-writable directory if permission denied
+                if "Permission denied" in stderr.decode():
+                    self.logger.warning("Permission denied for disk path. Retrying in /tmp...")
+                    new_path = os.path.join("/tmp", os.path.basename(disk_path))
+                    return await self.create_disk(new_path, size_gb, backing_file)
+                return False
+            return disk_path
+        except Exception as e:
+            self.logger.error(f"Disk creation failed: {e}")
+            return False
+
+    async def define_vm(self, xml):
+        """Defines a new VM from XML."""
+        try:
+            self.conn.defineXML(xml)
+            return True
+        except libvirt.libvirtError as e:
+            self.logger.error(f"Failed to define VM: {e}")
+            return False
+
+    async def create_snapshot(self, vm_name, snapshot_name="clean-baseline", description="Clean state"):
+        """Takes a snapshot of the VM."""
+        dom = self._get_domain(vm_name)
+        if not dom: return False
+
+        xml = f"""
+        <domainsnapshot>
+          <name>{snapshot_name}</name>
+          <description>{description}</description>
+        </domainsnapshot>
+        """
+        try:
+            dom.snapshotCreateXML(xml, 0)
+            return True
+        except libvirt.libvirtError as e:
+            self.logger.error(f"Failed to create snapshot: {e}")
+            return False
 
     async def verify_environment(self, vm_name, snapshot_name="clean-baseline"):
         """Automated check for VM and snapshot existence."""
@@ -50,31 +131,33 @@ class VMManager:
         try:
             if not dom.isActive():
                 dom.create()
-
-            # Poll for guest agent readiness
-            for _ in range(60): # 60 seconds timeout
-                try:
-                    # Send a simple ping command to guest agent
-                    ping_args = {"execute": "guest-ping"}
-                    cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(ping_args)]
-                    proc = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
-                    )
-                    await proc.communicate()
-                    if proc.returncode == 0:
-                        self.logger.info(f"Guest agent ready for {vm_name}")
-                        return True
-                except:
-                    pass
-                await asyncio.sleep(2)
-
-            self.logger.error(f"Guest agent timeout for VM {vm_name}")
-            return False
+            return True
         except libvirt.libvirtError as e:
             self.logger.error(f"Failed to start VM: {e}")
             return False
+
+    async def wait_for_guest_agent(self, vm_name, timeout=300):
+        """Polls for guest agent readiness."""
+        self.logger.info(f"Waiting for guest agent on {vm_name} (timeout {timeout}s)...")
+        for _ in range(timeout // 5):
+            try:
+                ping_args = {"execute": "guest-ping"}
+                cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(ping_args)]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await proc.communicate()
+                if proc.returncode == 0:
+                    self.logger.info(f"Guest agent ready for {vm_name}")
+                    return True
+            except:
+                pass
+            await asyncio.sleep(5)
+
+        self.logger.error(f"Guest agent timeout for VM {vm_name}")
+        return False
 
     async def stop_vm(self, vm_name):
         self.logger.info(f"Stopping VM: {vm_name}")
@@ -109,8 +192,6 @@ class VMManager:
         """Injects a file into the guest. VM MUST BE STOPPED for virt-copy-in."""
         self.logger.info(f"Injecting {local_path} to {vm_name}:{guest_path}")
 
-        # virt-copy-in -d domain local_file /remote/dir
-        # We handle renaming by creating a temporary file with the target name
         target_name = os.path.basename(guest_path)
         remote_dir = os.path.dirname(guest_path)
 
@@ -135,7 +216,7 @@ class VMManager:
                 self.logger.error(f"Injection failed: {e}")
                 return False
 
-    async def run_command(self, vm_name, command):
+    async def run_command(self, vm_name, command, shell="/bin/sh"):
         """Runs a command in the guest via qemu-guest-agent."""
         self.logger.info(f"Running command in {vm_name}: {command}")
 
@@ -143,8 +224,8 @@ class VMManager:
             exec_args = {
                 "execute": "guest-exec",
                 "arguments": {
-                    "path": "/bin/sh",
-                    "arg": ["-c", command],
+                    "path": shell,
+                    "arg": ["/c" if "cmd" in shell else "-c", command],
                     "capture-output": True
                 }
             }

@@ -24,12 +24,19 @@ pip install -r requirements.txt
 
 ## VM Preparation
 
-The sandbox requires a pre-configured Virtual Machine in libvirt.
+The sandbox requires a pre-configured Virtual Machine in libvirt. You can either prepare it manually or use the built-in automated tool.
 
+### Automated VM Preparation (Recommended)
+1. Launch MalSandbox: `python main.py`.
+2. Click **Prepare New VM**.
+3. Fill in the VM Name, Distro (Ubuntu, Debian, or Windows), RAM, CPU, and Disk size.
+4. Click **Prepare VM** and wait for the process to complete (this includes downloading images, automated installation, and snapshotting).
+
+### Manual VM Preparation
 1. **Create a VM**: Use `virt-manager` to create a VM (e.g., named `ubuntu-clean`).
 2. **Install Guest Agent**: Ensure `qemu-guest-agent` is installed and running inside the guest OS.
-3. **Configure Network**: The VM should ideally be on an isolated network.
-4. **Take a Snapshot**: Once the VM is configured, take a snapshot named `clean-baseline`.
+3. **Configure Network**: The VM should be on an isolated network named `malware-analysis`.
+4. **Take a Snapshot**: Once configured, take a snapshot named `clean-baseline`.
    ```bash
    virsh snapshot-create-as ubuntu-clean clean-baseline "Clean state for analysis"
    ```
