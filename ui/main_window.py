@@ -3,6 +3,7 @@ from ui.dashboard import Dashboard
 from ui.log_viewer import LogViewer
 from ui.yara_editor import YaraEditor
 from ui.report_view import ReportView
+from ui.prepare_vm_gui import VMPrepareWindow
 import os
 
 class MainWindow(Adw.ApplicationWindow):
@@ -32,6 +33,10 @@ class MainWindow(Adw.ApplicationWindow):
         # In a real app, we'd pull this from the DB
         self.dashboard.update_data(87, 4, 12)
 
+    def _on_prepare_vm_clicked(self, btn):
+        win = VMPrepareWindow(parent=self)
+        win.present()
+
     def _append_log(self, msg, sev):
         GLib.idle_add(self.log_viewer.append_log, msg, sev)
 
@@ -60,6 +65,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.upload_btn.add_css_class("suggested-action")
         self.upload_btn.connect("clicked", self._on_submit_clicked)
         upload_box.append(self.upload_btn)
+
+        self.prepare_btn = Gtk.Button(label="Prepare New VM")
+        self.prepare_btn.connect("clicked", self._on_prepare_vm_clicked)
+        upload_box.append(self.prepare_btn)
 
         self.main_box.append(upload_box)
 
