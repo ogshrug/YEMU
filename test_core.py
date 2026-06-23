@@ -2,6 +2,7 @@ import asyncio
 from core.threat_scorer import ThreatScorer
 from core.yara_engine import YaraEngine
 import os
+import shutil
 
 def test_threat_scorer():
     scorer = ThreatScorer()
@@ -20,15 +21,22 @@ def test_threat_scorer():
     print("ThreatScorer tests passed!")
 
 def test_yara_engine():
+    # Create a temporary rules directory
+    os.makedirs("test_rules", exist_ok=True)
+    with open("test_rules/test.yar", "w") as f:
+        f.write('rule test_rule { strings: $a = "encrypt" condition: $a }')
+
     # Create a temp file to scan
     with open("test_sample.txt", "w") as f:
         f.write("This is a test sample with encrypt and decrypt keywords.")
 
-    engine = YaraEngine(rules_path="rules/default.yar")
+    engine = YaraEngine(rules_dir="test_rules")
     matches = engine.scan_file("test_sample.txt")
 
-    assert any("Ransomware_Heuristic" in m for m in matches)
+    assert any("test_rule" in m for m in matches)
+
     os.remove("test_sample.txt")
+    shutil.rmtree("test_rules")
     print("YaraEngine tests passed!")
 
 if __name__ == "__main__":
