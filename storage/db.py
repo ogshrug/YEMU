@@ -76,6 +76,36 @@ class Database:
             await self.conn.commit()
             return cursor.lastrowid
 
+    async def update_analysis(self, analysis_id, finished_at=None, threat_score=None, verdict=None, yara_matches=None, report_json=None):
+        query = "UPDATE analyses SET "
+        params = []
+        updates = []
+        if finished_at is not None:
+            updates.append("finished_at = ?")
+            params.append(finished_at)
+        if threat_score is not None:
+            updates.append("threat_score = ?")
+            params.append(threat_score)
+        if verdict is not None:
+            updates.append("verdict = ?")
+            params.append(verdict)
+        if yara_matches is not None:
+            updates.append("yara_matches = ?")
+            params.append(json.dumps(yara_matches))
+        if report_json is not None:
+            updates.append("report_json = ?")
+            params.append(json.dumps(report_json))
+
+        if not updates:
+            return
+
+        query += ", ".join(updates)
+        query += " WHERE id = ?"
+        params.append(analysis_id)
+
+        await self.conn.execute(query, tuple(params))
+        await self.conn.commit()
+
     async def add_event(self, analysis_id, event_type, timestamp, severity, details):
         await self.conn.execute(
             "INSERT INTO events (analysis_id, event_type, timestamp, severity, details) VALUES (?, ?, ?, ?, ?)",
