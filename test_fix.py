@@ -1,10 +1,12 @@
 
 import asyncio
+import pytest
 import logging
 from core.vm_manager import VMManager, MockVMManager
 from core.orchestrator import Orchestrator
 import libvirt
 
+@pytest.mark.asyncio
 async def test_vm_manager_connection_fallback():
     print("Testing VMManager connection fallback...")
     vm_mgr = VMManager()
@@ -14,6 +16,7 @@ async def test_vm_manager_connection_fallback():
     except Exception as e:
         print(f"Connection failed as expected in restricted environment: {e}")
 
+@pytest.mark.asyncio
 async def test_mock_vm_manager():
     print("Testing MockVMManager...")
     mock_mgr = MockVMManager()

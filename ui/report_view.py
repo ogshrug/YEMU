@@ -30,9 +30,14 @@ class ReportView(Gtk.Box):
         self.append(self.export_btn)
 
     def update_report(self, details, events):
+        if not details:
+            self.title_label.set_label("No report data available")
+            self.export_btn.set_sensitive(False)
+            return
+
         self.current_details = details
-        self.current_events = events
-        self.title_label.set_label(f"Report: {details['filename']}")
+        self.current_events = events or []
+        self.title_label.set_label(f"Report: {details.get('filename', 'unknown')}")
         self.export_btn.set_sensitive(True)
 
         # Clear list
@@ -43,7 +48,8 @@ class ReportView(Gtk.Box):
 
         # Add some key info as "IOCs"
         import json
-        yara_matches = json.loads(details['yara_matches']) if details['yara_matches'] else []
+        yara_matches_raw = details.get('yara_matches')
+        yara_matches = json.loads(yara_matches_raw) if yara_matches_raw else []
 
         has_content = False
         for match in yara_matches:
@@ -57,7 +63,7 @@ class ReportView(Gtk.Box):
             else:
                 self.add_ioc("YARA", str(match))
 
-        for ev in events:
+        for ev in self.current_events:
             det = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
             if ev['event_type'] == 'network':
                 has_content = True
