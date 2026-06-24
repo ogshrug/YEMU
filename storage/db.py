@@ -3,7 +3,7 @@ import json
 import logging
 
 class Database:
-    def __init__(self, db_path=":memory:"):
+    def __init__(self, db_path="malware_sandbox.db"):
         self.db_path = db_path
 
     async def connect(self):
@@ -112,6 +112,31 @@ class Database:
             (analysis_id, event_type, timestamp, severity, json.dumps(details))
         )
         await self.conn.commit()
+
+    async def get_recent_analyses(self, limit=50):
+        async with self.conn.execute("""
+            SELECT a.id, s.filename, a.started_at, a.verdict, a.threat_score
+            FROM analyses a
+            JOIN samples s ON a.sample_id = s.id
+            ORDER BY a.started_at DESC
+            LIMIT ?
+        """, (limit,)) as cursor:
+            return await cursor.fetchall()
+
+    async def get_analysis_details(self, analysis_id):
+        async with self.conn.execute("""
+            SELECT a.*, s.filename, s.sha256, s.md5, s.size_bytes, s.file_type
+            FROM analyses a
+            JOIN samples s ON a.sample_id = s.id
+            WHERE a.id = ?
+        """, (analysis_id,)) as cursor:
+            return await cursor.fetchone()
+
+    async def get_analysis_events(self, analysis_id):
+        async with self.conn.execute("""
+            SELECT * FROM events WHERE analysis_id = ? ORDER BY timestamp ASC
+        """, (analysis_id,)) as cursor:
+            return await cursor.fetchall()
 
     async def close(self):
         await self.conn.close()

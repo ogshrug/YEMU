@@ -23,16 +23,23 @@ class Dashboard(Gtk.Box):
 
         # Tabs for details
         self.notebook = Gtk.Notebook()
+        self.notebook.set_vexpand(True)
         self.append(self.notebook)
 
-        self.proc_tree = Gtk.Label(label="Process Tree details will appear here")
-        self.notebook.append_page(self.proc_tree, Gtk.Label(label="Process Tree"))
+        self.proc_tree = Gtk.ListBox()
+        self.notebook.append_page(self._create_scrolled(self.proc_tree), Gtk.Label(label="Process Tree"))
 
-        self.net_view = Gtk.Label(label="Network activity details will appear here")
-        self.notebook.append_page(self.net_view, Gtk.Label(label="Network"))
+        self.net_view = Gtk.ListBox()
+        self.notebook.append_page(self._create_scrolled(self.net_view), Gtk.Label(label="Network"))
 
-        self.file_view = Gtk.Label(label="File event details will appear here")
-        self.notebook.append_page(self.file_view, Gtk.Label(label="File Events"))
+        self.file_view = Gtk.ListBox()
+        self.notebook.append_page(self._create_scrolled(self.file_view), Gtk.Label(label="File Events"))
+
+    def _create_scrolled(self, widget):
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_vexpand(True)
+        scrolled.set_child(widget)
+        return scrolled
 
     def _create_card(self, title, value, style):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -47,7 +54,39 @@ class Dashboard(Gtk.Box):
         card.append(v_label)
         return card
 
-    def update_data(self, score, yara_count, ioc_count):
+    def update_data(self, score, yara_count, ioc_count, events=None):
         self.score_card.get_last_child().set_label(str(score))
         self.yara_card.get_last_child().set_label(str(yara_count))
         self.ioc_card.get_last_child().set_label(str(ioc_count))
+
+        if events:
+            self._populate_events(events)
+
+    def _populate_events(self, events):
+        import json
+        from gi.repository import Adw
+
+        # Clear lists
+        for lb in [self.proc_tree, self.net_view, self.file_view]:
+            while True:
+                row = lb.get_first_child()
+                if not row: break
+                lb.remove(row)
+
+        for ev in events:
+            details = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
+            ev_type = ev['event_type']
+
+            row = Adw.ActionRow()
+            if ev_type == 'process':
+                row.set_title(f"PID {details.get('pid', 'N/A')}: {details.get('action', 'unknown')}")
+                row.set_subtitle(details.get('path', ''))
+                self.proc_tree.append(row)
+            elif ev_type == 'network':
+                row.set_title(f"{details.get('dst_ip', 'N/A')}:{details.get('dst_port', 'N/A')}")
+                row.set_subtitle(details.get('syscall', 'connect'))
+                self.net_view.append(row)
+            elif ev_type == 'file':
+                row.set_title(f"{details.get('action', 'unknown').upper()}: {details.get('path', 'N/A')}")
+                row.set_subtitle(details.get('syscall', ''))
+                self.file_view.append(row)

@@ -15,8 +15,8 @@ class Orchestrator:
         if self.ui_callback:
             self.ui_callback(message, severity)
 
-    async def run_analysis(self, sample_path, guest_os="ubuntu-clean", snapshot_name="clean-baseline", run_gui=False):
-        self.logger.info(f"Starting analysis for {sample_path} on {guest_os} (Snapshot: {snapshot_name}, GUI: {run_gui})")
+    async def run_analysis(self, sample_path, guest_os="ubuntu-clean", snapshot_name="clean-baseline", run_gui=False, run_pcap=False):
+        self.logger.info(f"Starting analysis for {sample_path} on {guest_os} (Snapshot: {snapshot_name}, GUI: {run_gui}, PCAP: {run_pcap})")
         self._notify_ui(f"Starting analysis on {guest_os} (Snapshot: {snapshot_name})...")
 
         # 0. Static Analysis
@@ -70,21 +70,61 @@ class Orchestrator:
                 return analysis_id
 
             # 4. Execute with monitoring
+            tcpdump_proc = None
+            if run_pcap:
+                self._notify_ui("Starting packet capture...")
+                # We need to run tcpdump on the host for the specific VM interface or inside the guest
+                # For simplicity, let's assume we run it inside the guest if possible,
+                # or we just use the host-side capture if we know the interface.
+                # Here we will try to run it inside the guest in background.
+                await self.vm_manager.run_command(guest_os, "tcpdump -i any -w /tmp/capture.pcap &")
+
             self._notify_ui("Executing sample with strace monitoring...")
             await self.db.add_event(analysis_id, "process", 0.1, "INFO", {"msg": "Execution started"})
 
-            strace_cmd = f"chmod +x {guest_sample_path} && strace -tt -o /tmp/strace.log {guest_sample_path}"
+            strace_cmd = f"chmod +x {guest_sample_path} && strace -ff -tt -o /tmp/strace.log {guest_sample_path}"
             await self.vm_manager.run_command(guest_os, strace_cmd)
 
             # 5. Collect and Parse results
             self._notify_ui("Collecting behavioral logs...")
-            strace_log = await self.vm_manager.run_command(guest_os, "cat /tmp/strace.log")
+
+            if run_pcap:
+                self._notify_ui("Stopping packet capture and collecting PCAP...")
+                await self.vm_manager.run_command(guest_os, "killall tcpdump")
+                await self.vm_manager.run_command(guest_os, "sync")
+
+                # Pull PCAP from VM
+                local_pcap = f"storage/captures/{analysis_id}.pcap"
+                os.makedirs("storage/captures", exist_ok=True)
+                # Need a method to pull file from VM
+                if hasattr(self.vm_manager, 'pull_file'):
+                    await self.vm_manager.pull_file(guest_os, "/tmp/capture.pcap", local_pcap)
+
+                    from core.network_capture import NetworkCapture
+                    net_cap = NetworkCapture()
+                    iocs = net_cap.analyze_pcap(local_pcap)
+                    for ioc_type, value in iocs:
+                        await self.db.add_event(analysis_id, "network", 0, "INFO", {"type": ioc_type, "value": value, "source": "pcap"})
+            # With -ff, strace creates multiple files: /tmp/strace.log.<pid>
+            # We need to find all of them and parse them
+            pids_str = await self.vm_manager.run_command(guest_os, "ls /tmp/strace.log*")
+            log_files = pids_str.strip().split()
+
             from core.behaviour_monitor import BehaviourMonitor
             monitor = BehaviourMonitor()
-            events = monitor.parse_strace(strace_log.splitlines())
+            all_events = []
 
-            for ev in events:
-                await self.db.add_event(analysis_id, ev['type'], 0, "WARN", ev)
+            for log_file in log_files:
+                pid = log_file.split('.')[-1]
+                content = await self.vm_manager.run_command(guest_os, f"cat {log_file}")
+                events = monitor.parse_strace(content.splitlines(), pid=pid)
+                all_events.extend(events)
+
+            # Sort events by timestamp if available
+            all_events.sort(key=lambda x: x.get('timestamp', 0))
+
+            for ev in all_events:
+                await self.db.add_event(analysis_id, ev['type'], ev.get('timestamp', 0), "WARN", ev)
                 self._notify_ui(f"Behavior: {ev.get('syscall', 'unknown')}", "WARN")
 
             # 6. Threat Scoring
