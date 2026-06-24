@@ -1,23 +1,36 @@
-import yara
 import os
+from pathlib import Path
 import logging
 import concurrent.futures
 import asyncio
 import re
 
+try:
+    import yara
+except ImportError:
+    yara = None
+
 class YaraEngine:
     def __init__(self, rules_dir="rules/yara-rules"):
-        self.rules_dir = rules_dir
+        self.rules_dir = Path(rules_dir)
         self.rules = None
         self.logger = logging.getLogger(__name__)
         self.load_rules()
 
     def load_rules(self):
+        if not yara:
+            self.logger.warning("YARA module not found. Static analysis and memory scanning will be disabled.")
+            return
+
+        if not self.rules_dir.is_dir():
+            self.logger.warning(f"Rules directory {self.rules_dir} does not exist.")
+            return
+
         # We try to compile rules one by one if they fail in bulk
         # But first, let's try to compile the main index
-        index_path = os.path.join(self.rules_dir, "index.yar")
+        index_path = self.rules_dir / "index.yar"
 
-        if os.path.exists(index_path):
+        if index_path.exists():
             try:
                 self.rules = yara.compile(filepath=index_path)
                 self.logger.info("Successfully loaded YARA rules from index.yar")
@@ -30,16 +43,14 @@ class YaraEngine:
         self.logger.info("Attempting to load rules individually to avoid collisions...")
 
         compiled_rules = []
-        for root, _, files in os.walk(self.rules_dir):
-            for file in files:
-                if (file.endswith(".yar") or file.endswith(".yara")) and file != "index.yar":
-                    full_path = os.path.join(root, file)
-                    try:
-                        # Test compile individual file
-                        r = yara.compile(filepath=full_path)
-                        compiled_rules.append(full_path)
-                    except:
-                        continue # Skip problematic files
+        for file_path in self.rules_dir.rglob("*"):
+            if (file_path.suffix in [".yar", ".yara"]) and file_path.name != "index.yar":
+                try:
+                    # Test compile individual file
+                    yara.compile(filepath=str(file_path))
+                    compiled_rules.append(str(file_path))
+                except Exception:
+                    continue # Skip problematic files
 
         # Now try to compile the list of "good" files
         # We still might get collisions if different files use same identifiers
@@ -105,6 +116,9 @@ class YaraEngine:
         results = []
         if not self.rules:
             self.logger.error("No YARA rules loaded for scan_file")
+            return results
+        if not os.path.exists(filepath):
+            self.logger.error(f"File not found for YARA scan: {filepath}")
             return results
         try:
             self.logger.info(f"Scanning file: {filepath}")

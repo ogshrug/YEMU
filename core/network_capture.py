@@ -1,5 +1,9 @@
-from scapy.all import rdpcap, IP, TCP, UDP, DNS
 import logging
+
+try:
+    from scapy.all import rdpcap, IP, TCP, UDP, DNS
+except ImportError:
+    rdpcap = None
 
 class NetworkCapture:
     def __init__(self):
@@ -7,6 +11,10 @@ class NetworkCapture:
 
     def analyze_pcap(self, pcap_path):
         iocs = set()
+        if not rdpcap:
+            self.logger.warning("Scapy not found. PCAP analysis disabled.")
+            return []
+
         try:
             packets = rdpcap(pcap_path)
             for pkt in packets:

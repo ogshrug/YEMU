@@ -1,4 +1,7 @@
-from gi.repository import Gtk, Adw
+try:
+    from gi.repository import Gtk, Adw
+except ImportError:
+    Gtk = None
 
 class Dashboard(Gtk.Box):
     def __init__(self, **kwargs):

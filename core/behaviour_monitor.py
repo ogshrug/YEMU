@@ -15,6 +15,7 @@ class BehaviourMonitor:
         events = []
         current_pid = pid
         for line in log_lines:
+            if not line: continue
             # Extract timestamp if present (-tt)
             timestamp = 0
             ts_match = re.match(r'^(\d{2}:\d{2}:\d{2}\.\d+)\s+', line)
@@ -24,8 +25,8 @@ class BehaviourMonitor:
                 try:
                     h, m, s = ts_str.split(':')
                     timestamp = int(h) * 3600 + int(m) * 60 + float(s)
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.warning(f"Failed to parse timestamp {ts_str}: {e}")
 
             proc_info = self.process_info.get(current_pid, {
                 "process_name": "unknown",

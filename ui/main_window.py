@@ -1,4 +1,10 @@
-from gi.repository import Gtk, Adw, Gio, GLib
+import logging
+
+try:
+    from gi.repository import Gtk, Adw, Gio, GLib
+except ImportError:
+    Gtk = None
+
 from ui.dashboard import Dashboard
 from ui.log_viewer import LogViewer
 from ui.yara_editor import YaraEditor
@@ -128,17 +134,29 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_prepare_vm_clicked(self, btn):
         script = os.path.join(os.path.dirname(__file__), "prepare_vm.sh")
-        subprocess.Popen(["bash", script], cwd=os.path.dirname(script))
+        import threading
+        def run_script():
+            try:
+                subprocess.Popen(["bash", script], cwd=os.path.dirname(script))
+            except Exception as e:
+                self._append_log(f"Failed to launch prepare_vm.sh: {e}", "CRITICAL")
+        threading.Thread(target=run_script, daemon=True).start()
 
     def _append_log(self, msg, sev):
         GLib.idle_add(self.log_viewer.append_log, msg, sev)
 
     def _update_vm_list(self):
-        try:
-            vms = self.orchestrator.vm_manager.list_vms()
-            vms = [""] + sorted(vms)
-            self.vm_dropdown.set_model(Gtk.StringList.new(vms))
-        except Exception as e:
+        import threading
+        def run_update():
+            try:
+                vms = self.orchestrator.vm_manager.list_vms()
+                vms = [""] + sorted(vms)
+                GLib.idle_add(lambda: self.vm_dropdown.set_model(Gtk.StringList.new(vms)))
+            except Exception as e:
+                GLib.idle_add(self._on_vm_list_error, e)
+        threading.Thread(target=run_update, daemon=True).start()
+
+    def _on_vm_list_error(self, e):
             self._append_log(f"Error listing VMs: {e}. Falling back to Mock Mode.", "CRITICAL")
             if not isinstance(self.orchestrator.vm_manager, MockVMManager):
                 from core.vm_manager import MockVMManager
@@ -151,13 +169,16 @@ class MainWindow(Adw.ApplicationWindow):
         if selected_item:
             vm_name = selected_item.get_string()
             if vm_name:
-                try:
-                    snapshots = self.orchestrator.vm_manager.list_snapshots(vm_name)
-                    snapshots = [""] + sorted(snapshots)
-                    self.snapshot_dropdown.set_model(Gtk.StringList.new(snapshots))
-                except Exception as e:
-                    self._append_log(f"Error listing snapshots: {e}", "CRITICAL")
-                    self.snapshot_dropdown.set_model(Gtk.StringList.new([""]))
+                import threading
+                def run_snapshots():
+                    try:
+                        snapshots = self.orchestrator.vm_manager.list_snapshots(vm_name)
+                        snapshots = [""] + sorted(snapshots)
+                        GLib.idle_add(lambda: self.snapshot_dropdown.set_model(Gtk.StringList.new(snapshots)))
+                    except Exception as e:
+                        self._append_log(f"Error listing snapshots: {e}", "CRITICAL")
+                        GLib.idle_add(lambda: self.snapshot_dropdown.set_model(Gtk.StringList.new([""])))
+                threading.Thread(target=run_snapshots, daemon=True).start()
             else:
                 self.snapshot_dropdown.set_model(Gtk.StringList.new([""]))
         self._validate_submit()

@@ -1,15 +1,28 @@
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 import json
+import logging
+
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+except ImportError:
+    letter = None
 
 class PDFGenerator:
     def __init__(self, output_path):
         self.output_path = output_path
-        self.styles = getSampleStyleSheet()
+        self.logger = logging.getLogger(__name__)
+        if letter:
+            self.styles = getSampleStyleSheet()
+        else:
+            self.styles = None
 
     def generate(self, details, events):
+        if not letter:
+            self.logger.error("ReportLab not found. PDF generation disabled.")
+            return
+
         doc = SimpleDocTemplate(self.output_path, pagesize=letter)
         elements = []
 

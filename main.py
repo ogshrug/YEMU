@@ -1,11 +1,15 @@
 import sys
 import os
-import gi
 import logging
 
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Gio, Gdk
+try:
+    import gi
+    gi.require_version('Gtk', '4.0')
+    gi.require_version('Adw', '1')
+    from gi.repository import Gtk, Adw, Gio, Gdk
+except ImportError:
+    Gtk = None
+    print("Warning: gi.repository not found. GUI will be unavailable.")
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("main")
@@ -54,5 +58,8 @@ class MalwareSandboxApp(Adw.Application):
         win.present()
 
 if __name__ == "__main__":
+    if Gtk is None:
+        print("Critical Error: Gtk not found. Exiting.")
+        sys.exit(1)
     app = MalwareSandboxApp()
     sys.exit(app.run(sys.argv))

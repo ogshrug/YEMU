@@ -1,11 +1,19 @@
 import os
-import requests
 import zipfile
 import io
-import yara
 import json
 import datetime
 import logging
+
+try:
+    import requests
+except ImportError:
+    requests = None
+
+try:
+    import yara
+except ImportError:
+    yara = None
 
 class YaraRuleSync:
     def __init__(self, repo_url="https://github.com/Yara-Rules/rules", branch="master", rules_dir="rules/yara-rules/"):
@@ -29,6 +37,11 @@ class YaraRuleSync:
         Synchronize YARA rules from the remote repository.
         progress_callback: function(current, total, filename)
         """
+        if not requests:
+            raise ImportError("requests module not found. Please install requests.")
+        if not yara:
+            self.logger.warning("YARA module not found. Rules will be downloaded but NOT validated.")
+
         zip_url = f"https://github.com/{self.owner}/{self.repo_name}/archive/refs/heads/{self.branch}.zip"
         self.logger.info(f"Downloading YARA rules from {zip_url}")
 
@@ -36,7 +49,7 @@ class YaraRuleSync:
             progress_callback(0, 100, "Initiating download...")
 
         try:
-            response = requests.get(zip_url, stream=True)
+            response = requests.get(zip_url, stream=True, timeout=30)
             response.raise_for_status()
 
             total_size = int(response.headers.get('content-length', 0))
@@ -71,7 +84,8 @@ class YaraRuleSync:
                         content_str = content_bytes.decode('utf-8', errors='ignore')
 
                         # Validate
-                        yara.compile(source=content_str)
+                        if yara:
+                            yara.compile(source=content_str)
 
                         # Determine local path
                         # Remove the first component of the zip path (the archive root)

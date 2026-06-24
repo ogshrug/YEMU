@@ -1,12 +1,16 @@
 import logging
 import asyncio
-import libvirt
 import os
 import subprocess
 import json
 import base64
 import tempfile
 import shutil
+
+try:
+    import libvirt
+except ImportError:
+    libvirt = None
 
 class VMManager:
     def __init__(self, ui_callback=None):
@@ -21,6 +25,9 @@ class VMManager:
             self.ui_callback(msg, severity)
 
     def _get_conn(self):
+        if not libvirt:
+            raise RuntimeError("libvirt module not found. Please install libvirt-python.")
+
         if self._conn is not None:
             try:
                 if self._conn.isAlive():
@@ -134,7 +141,13 @@ class VMManager:
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+            except (asyncio.TimeoutError, TimeoutError):
+                process.kill()
+                self.logger.error("qemu-img create timed out")
+                return False
+
             if process.returncode != 0:
                 self.logger.error(f"qemu-img failed: {stderr.decode()}")
                 stderr_str = stderr.decode()
@@ -199,7 +212,12 @@ class VMManager:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
-                stdout, stderr = await proc.communicate()
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+                except (asyncio.TimeoutError, TimeoutError):
+                    proc.kill()
+                    continue
+
                 if proc.returncode == 0:
                     self.logger.info(f"Guest agent ready for {vm_name}")
                     return True
@@ -243,7 +261,13 @@ class VMManager:
                 process = await asyncio.create_subprocess_exec(
                     *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
-                stdout, stderr = await process.communicate()
+                try:
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+                except (asyncio.TimeoutError, TimeoutError):
+                    process.kill()
+                    self.logger.error("virt-copy-in timed out")
+                    return False
+
                 if process.returncode != 0:
                     self.logger.error(f"virt-copy-in failed: {stderr.decode()}")
                     return False
@@ -267,7 +291,13 @@ class VMManager:
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            except (asyncio.TimeoutError, TimeoutError):
+                proc.kill()
+                self.logger.error(f"virsh qemu-agent-command timed out for: {command}")
+                return ""
+
             if proc.returncode != 0:
                 err_msg = stderr.decode()
                 if "agent is not configured" in err_msg or "not supported" in err_msg:
@@ -296,7 +326,12 @@ class VMManager:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
-                stdout, _ = await proc.communicate()
+                try:
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                except (asyncio.TimeoutError, TimeoutError):
+                    proc.kill()
+                    continue
+
                 try:
                     status_resp = json.loads(stdout.decode())
                 except json.JSONDecodeError:
@@ -360,7 +395,13 @@ class VMManager:
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+            except (asyncio.TimeoutError, TimeoutError):
+                process.kill()
+                self.logger.error("virt-copy-out timed out")
+                return False
+
             if process.returncode != 0:
                 self.logger.error(f"virt-copy-out failed: {stderr.decode()}")
                 return False
