@@ -139,7 +139,12 @@ class MainWindow(Adw.ApplicationWindow):
             vms = [""] + sorted(vms)
             self.vm_dropdown.set_model(Gtk.StringList.new(vms))
         except Exception as e:
-            self._append_log(f"Error listing VMs: {e}", "CRITICAL")
+            self._append_log(f"Error listing VMs: {e}. Falling back to Mock Mode.", "CRITICAL")
+            if not isinstance(self.orchestrator.vm_manager, MockVMManager):
+                from core.vm_manager import MockVMManager
+                self.orchestrator.vm_manager = MockVMManager(ui_callback=self._append_log)
+                vms = [""] + sorted(self.orchestrator.vm_manager.list_vms())
+                self.vm_dropdown.set_model(Gtk.StringList.new(vms))
 
     def _on_vm_selected(self, dropdown, pspec):
         selected_item = dropdown.get_selected_item()
@@ -177,6 +182,31 @@ class MainWindow(Adw.ApplicationWindow):
             snap_selected = True
 
         self.upload_btn.set_sensitive(vm_selected and snap_selected)
+
+    def _check_group_permissions(self):
+        import grp
+        import os
+        try:
+            username = os.getlogin()
+            groups = [g.gr_name for g in grp.getgrall() if username in g.gr_mem]
+            # Also check primary group
+            import pwd
+            primary_group_id = pwd.getpwnam(username).pw_gid
+            groups.append(grp.getgrgid(primary_group_id).gr_name)
+
+            missing = []
+            if 'libvirt' not in groups: missing.append('libvirt')
+            if 'kvm' not in groups: missing.append('kvm')
+
+            if missing:
+                msg = f"User '{username}' is missing groups: {', '.join(missing)}. " \
+                      f"Please run 'sudo usermod -aG libvirt,kvm $USER' and re-login."
+                self._append_log(msg, "CRITICAL")
+                return False
+            return True
+        except Exception as e:
+            self._append_log(f"Failed to check group permissions: {e}", "WARN")
+            return True # Assume OK if check fails
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -288,11 +318,20 @@ class MainWindow(Adw.ApplicationWindow):
         # Database and Orchestrator
         from storage.db import Database
         from core.orchestrator import Orchestrator
+        from core.vm_manager import VMManager, MockVMManager
         import threading
         import asyncio
 
         self.db = Database()
-        self.orchestrator = Orchestrator(self.db, ui_callback=self._append_log)
+
+        # Check permissions
+        if not self._check_group_permissions():
+            vm_mgr = MockVMManager(ui_callback=self._append_log)
+            self._append_log("Starting in Mock Mode due to missing permissions.", "WARN")
+        else:
+            vm_mgr = VMManager(ui_callback=self._append_log)
+
+        self.orchestrator = Orchestrator(self.db, vm_manager=vm_mgr, ui_callback=self._append_log)
 
         # Initial populations and validation
         self._update_vm_list()

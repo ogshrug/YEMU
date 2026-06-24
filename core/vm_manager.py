@@ -9,21 +9,52 @@ import tempfile
 import shutil
 
 class VMManager:
-    def __init__(self):
+    def __init__(self, ui_callback=None):
         self.logger = logging.getLogger(__name__)
+        self.ui_callback = ui_callback
         self._conn = None
+        # Fix for libguestfs kernel access errors
+        os.environ["LIBGUESTFS_BACKEND"] = "direct"
+
+    def _notify_ui(self, msg, severity="INFO"):
+        if self.ui_callback:
+            self.ui_callback(msg, severity)
 
     def _get_conn(self):
-        if self._conn is None:
-            self._conn = libvirt.open('qemu:///system')
-            if self._conn is None:
-                raise RuntimeError("Failed to open connection to qemu:///system")
-        return self._conn
+        if self._conn is not None:
+            try:
+                if self._conn.isAlive():
+                    return self._conn
+            except libvirt.libvirtError:
+                pass
+            self._conn = None
+
+        uris = ['qemu:///system', 'qemu:///session']
+        for uri in uris:
+            try:
+                self.logger.info(f"Attempting to connect to libvirt at {uri}...")
+                self._conn = libvirt.open(uri)
+                if self._conn is not None:
+                    self.logger.info(f"Successfully connected to libvirt using {uri}")
+                    return self._conn
+            except libvirt.libvirtError as e:
+                self.logger.warning(f"Failed to connect to {uri}: {e}")
+
+        raise RuntimeError("Failed to open connection to libvirt (tried system and session)")
 
     def _get_domain(self, vm_name):
         try:
-            return self._get_conn().lookupByName(vm_name)
-        except libvirt.libvirtError:
+            conn = self._get_conn()
+            return conn.lookupByName(vm_name)
+        except libvirt.libvirtError as e:
+            if e.get_error_code() == libvirt.VIR_ERR_NO_DOMAIN:
+                msg = f"VM '{vm_name}' not found in libvirt. Please create it first using 'Prepare New VM'."
+                self.logger.error(msg)
+                self._notify_ui(msg, "CRITICAL")
+            else:
+                msg = f"Libvirt error while looking up domain '{vm_name}': {e}"
+                self.logger.error(msg)
+                self._notify_ui(msg, "CRITICAL")
             return None
 
     def list_vms(self):
@@ -62,13 +93,17 @@ class VMManager:
             self.logger.warning(f"Could not undefine domain: {e}")
 
     async def ensure_network(self, network_name="malware-analysis"):
-        conn = self._get_conn()
         try:
+            conn = self._get_conn()
             net = conn.networkLookupByName(network_name)
             if not net.isActive():
+                self.logger.info(f"Network {network_name} is inactive. Starting...")
                 net.create()
             return True
-        except libvirt.libvirtError:
+        except libvirt.libvirtError as e:
+            if e.get_error_code() != libvirt.VIR_ERR_NO_NETWORK:
+                self.logger.error(f"Error looking up network {network_name}: {e}")
+                return False
             self.logger.info(f"Network {network_name} not found. Creating...")
             xml = f"""
             <network>
@@ -156,21 +191,31 @@ class VMManager:
 
     async def wait_for_guest_agent(self, vm_name, timeout=300):
         self.logger.info(f"Waiting for guest agent on {vm_name} (timeout {timeout}s)...")
-        for _ in range(timeout // 5):
+        for _ in range(max(1, timeout // 5)):
             try:
                 ping_args = {"execute": "guest-ping"}
+                # Use the same connection URI for virsh if possible, or just let it use default
                 cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(ping_args)]
                 proc = await asyncio.create_subprocess_exec(
                     *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
-                await proc.communicate()
+                stdout, stderr = await proc.communicate()
                 if proc.returncode == 0:
                     self.logger.info(f"Guest agent ready for {vm_name}")
                     return True
-            except Exception:
-                pass
+
+                stderr_str = stderr.decode().lower()
+                if "not found" in stderr_str or "no such domain" in stderr_str:
+                    self.logger.warning(f"VM {vm_name} not found during agent wait.")
+                    return False
+                if "agent is not configured" in stderr_str or "not supported" in stderr_str:
+                    self.logger.warning(f"Guest agent not configured for VM {vm_name}. Degrading gracefully.")
+                    return False
+            except Exception as e:
+                self.logger.debug(f"Guest agent check failed: {e}")
+
             await asyncio.sleep(5)
-        self.logger.error(f"Guest agent timeout for VM {vm_name}")
+        self.logger.warning(f"Guest agent timeout for VM {vm_name}. Proceeding without agent-dependent steps.")
         return False
 
     async def stop_vm(self, vm_name):
@@ -224,9 +269,19 @@ class VMManager:
             )
             stdout, stderr = await proc.communicate()
             if proc.returncode != 0:
-                self.logger.error(f"virsh qemu-agent-command failed: {stderr.decode()}")
+                err_msg = stderr.decode()
+                if "agent is not configured" in err_msg or "not supported" in err_msg:
+                    self.logger.warning(f"Guest agent unavailable for command: {command}")
+                else:
+                    self.logger.error(f"virsh qemu-agent-command failed: {err_msg}")
                 return ""
-            resp = json.loads(stdout.decode())
+
+            try:
+                resp = json.loads(stdout.decode())
+            except json.JSONDecodeError:
+                self.logger.error(f"Failed to decode agent response: {stdout.decode()}")
+                return ""
+
             if 'return' not in resp or 'pid' not in resp['return']:
                 self.logger.error(f"Unexpected response: {resp}")
                 return ""
@@ -242,7 +297,11 @@ class VMManager:
                     *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 stdout, _ = await proc.communicate()
-                status_resp = json.loads(stdout.decode())
+                try:
+                    status_resp = json.loads(stdout.decode())
+                except json.JSONDecodeError:
+                    continue
+
                 if 'return' in status_resp and status_resp['return']['exited']:
                     out_b64 = status_resp['return'].get('out-data', '')
                     return base64.b64decode(out_b64).decode(errors='replace')
@@ -279,10 +338,19 @@ class VMManager:
     async def open_gui(self, vm_name):
         self.logger.info(f"Opening GUI for {vm_name}")
         try:
-            subprocess.Popen(["virt-viewer", "-c", "qemu:///system", "--attach", vm_name])
+            # Try to determine URI from current connection or default
+            uri = "qemu:///system"
+            if self._conn:
+                try:
+                    uri = self._conn.getURI()
+                except libvirt.libvirtError:
+                    pass
+            subprocess.Popen(["virt-viewer", "-c", uri, "--attach", vm_name])
             return True
         except Exception as e:
-            self.logger.error(f"Failed to open GUI: {e}")
+            msg = f"Failed to open GUI: {e}"
+            self.logger.error(msg)
+            self._notify_ui(msg, "CRITICAL")
             return False
 
     async def pull_file(self, vm_name, guest_path, local_path):
@@ -306,3 +374,60 @@ class VMManager:
         except Exception as e:
             self.logger.error(f"Pull failed: {e}")
             return False
+
+class MockVMManager:
+    def __init__(self, ui_callback=None):
+        self.logger = logging.getLogger(__name__)
+        self.ui_callback = ui_callback
+
+    def _notify_ui(self, msg, severity="INFO"):
+        if self.ui_callback:
+            self.ui_callback(msg, severity)
+
+    def list_vms(self):
+        return ["mock-ubuntu", "mock-windows"]
+
+    def list_snapshots(self, vm_name):
+        return ["clean-baseline", "infected-state"]
+
+    async def ensure_network(self, network_name="malware-analysis"):
+        return True
+
+    async def create_disk(self, disk_path, size_gb, backing_file=None):
+        return disk_path
+
+    async def define_vm(self, xml, vm_name):
+        return True
+
+    async def create_snapshot(self, vm_name, snapshot_name="clean-baseline", description="Clean state"):
+        return True
+
+    async def start_vm(self, vm_name):
+        return True
+
+    async def wait_for_guest_agent(self, vm_name, timeout=300):
+        return True
+
+    async def stop_vm(self, vm_name):
+        return True
+
+    async def inject_file(self, vm_name, local_path, guest_path):
+        return True
+
+    async def run_command(self, vm_name, command, shell="/bin/sh"):
+        if "strace" in command:
+            return "execve('/bin/ls', ['ls'], 0x7ffd989c8d30) = 0\nopenat(AT_FDCWD, '.', O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3"
+        return "mock output"
+
+    async def verify_environment(self, vm_name):
+        return True, "OK"
+
+    async def revert_to_snapshot(self, vm_name, snapshot_name="clean-baseline"):
+        return True
+
+    async def open_gui(self, vm_name):
+        self.logger.info(f"Mock: Opening GUI for {vm_name}")
+        return True
+
+    async def pull_file(self, vm_name, guest_path, local_path):
+        return True

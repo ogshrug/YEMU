@@ -104,13 +104,17 @@ class VMProvisioner:
                 f.write(f"instance-id: {vm_name}\nlocal-hostname: {vm_name}\n")
             iso_path = os.path.join(tmpdir, f"{vm_name}-cloud-init.iso")
             cmd = [mkisofs, "-output", iso_path, "-volid", "cidata", "-joliet", "-rock", user_data_path, meta_data_path]
-            result = subprocess.run(cmd, check=False, capture_output=True)
-            if result.returncode != 0:
-                stderr = result.stderr.decode(errors="replace")
-                self.logger.error(f"mkisofs failed (exit {result.returncode}): {stderr}")
-                raise RuntimeError(
-                    f"mkisofs failed (exit {result.returncode}): {stderr}"
-                )
+            try:
+                result = subprocess.run(cmd, check=False, capture_output=True)
+                if result.returncode != 0:
+                    stderr = result.stderr.decode(errors="replace")
+                    self.logger.error(f"mkisofs failed (exit {result.returncode}): {stderr}")
+                    raise RuntimeError(
+                        f"mkisofs failed (exit {result.returncode}): {stderr}"
+                    )
+            except Exception as e:
+                self.logger.error(f"Failed to run mkisofs: {e}")
+                raise RuntimeError(f"Failed to run mkisofs: {e}")
             out_path = os.path.join(self.download_dir, f"{vm_name}-cloud-init.iso")
             if os.path.exists(out_path):
                 try:
@@ -134,13 +138,17 @@ class VMProvisioner:
                 f.write(xml_content)
             tmp_iso = os.path.join(tmpdir, f"{vm_name}-windows-auto.iso")
             cmd = [mkisofs, "-output", tmp_iso, "-volid", "OEMDRIVERS", "-joliet", "-rock", xml_path]
-            result = subprocess.run(cmd, check=False, capture_output=True)
-            if result.returncode != 0:
-                stderr = result.stderr.decode(errors="replace")
-                self.logger.error(f"mkisofs failed (exit {result.returncode}): {stderr}")
-                raise RuntimeError(
-                    f"mkisofs failed (exit {result.returncode}): {stderr}"
-                )
+            try:
+                result = subprocess.run(cmd, check=False, capture_output=True)
+                if result.returncode != 0:
+                    stderr = result.stderr.decode(errors="replace")
+                    self.logger.error(f"mkisofs failed (exit {result.returncode}): {stderr}")
+                    raise RuntimeError(
+                        f"mkisofs failed (exit {result.returncode}): {stderr}"
+                    )
+            except Exception as e:
+                self.logger.error(f"Failed to run mkisofs: {e}")
+                raise RuntimeError(f"Failed to run mkisofs: {e}")
             iso_path = os.path.join(self.download_dir, f"{vm_name}-windows-auto.iso")
             shutil.move(tmp_iso, iso_path)
             os.chmod(iso_path, 0o644)

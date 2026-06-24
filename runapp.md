@@ -75,15 +75,51 @@ python main.py
 
 ## Troubleshooting
 
-- **Libvirt Connection Error**: Ensure your user is in the `libvirt` and `kvm` groups.
+- **Libvirt Connection / Permission Errors**
+  If you see "Failed to connect socket to '/var/run/libvirt/libvirt-sock': Permission denied", it's likely a group membership issue.
+  Ensure your user is in the `libvirt` and `kvm` groups:
   ```bash
   sudo usermod -aG libvirt,kvm $USER
+  # You must log out and log back in for this to take effect.
   ```
-- **Libguestfs Permissions**: On some systems (like Ubuntu), libguestfs might fail to access the kernel. Fix this by running:
+  The application will automatically attempt to use `qemu:///session` if `qemu:///system` is inaccessible.
+
+- **Libguestfs Kernel Access Errors**
+  If automated VM preparation or `virt-copy-in` fails with "cannot access /boot/vmlinuz", fix it by granting read permissions to the kernel images:
   ```bash
   sudo chmod +r /boot/vmlinuz-*
-  # OR set LIBGUESTFS_BACKEND
-  export LIBGUESTFS_BACKEND=direct
   ```
-- **VM Not Found**: Check that the VM name in `core/orchestrator.py` (default: `ubuntu-clean`) matches your libvirt domain name.
-- **Guest Agent Not Responding**: Ensure the VM has a `virtio-serial` channel named `org.qemu.guest_agent.0` and `qemu-guest-agent` is running inside.
+  The app also sets `LIBGUESTFS_BACKEND=direct` internally to bypass some common permission issues.
+
+- **VM Domain Not Found**
+  If you get an error stating a VM was not found, verify that it appears in `virsh list --all`.
+  ```bash
+  virsh list --all
+  ```
+  If it's missing, use the **Prepare New VM** button to create it or create it manually via `virt-manager` ensuring the name matches.
+
+- **QEMU Guest Agent Not Responding**
+  If the guest agent times out, ensure:
+  1. The VM has the guest agent channel configured:
+     ```xml
+     <channel type='unix'>
+       <target type='virtio' name='org.qemu.guest_agent.0'/>
+     </channel>
+     ```
+  2. The `qemu-guest-agent` service is installed and running inside the guest OS:
+     ```bash
+     # Inside Ubuntu/Debian guest
+     sudo apt install qemu-guest-agent
+     sudo systemctl enable --now qemu-guest-agent
+     ```
+
+- **Isolated Network Issues**
+  If the `malware-analysis` network is missing, the app will try to auto-define it. You can also do it manually:
+  ```bash
+  virsh net-define assets/network.xml
+  virsh net-start malware-analysis
+  virsh net-autostart malware-analysis
+  ```
+
+- **Mock Mode Fallback**
+  If the app cannot find KVM or libvirt resources, it will automatically degrade to **Mock Mode**. A warning will be displayed in the Log Stream. This allows you to explore the UI even without a local virtualization setup.
