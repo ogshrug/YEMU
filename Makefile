@@ -12,3 +12,6 @@ run:
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	rm -rf assets/reports/*
+
+sync-rules:
+	python3 -c "from core.yara_sync import YaraRuleSync; YaraRuleSync().sync()"
