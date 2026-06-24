@@ -21,9 +21,9 @@ class Orchestrator:
 
         # 0. Static Analysis
         from core.yara_engine import YaraEngine
-        yara = YaraEngine()
+        self.yara_engine = YaraEngine()
         self._notify_ui("Running YARA static analysis...")
-        matches = await yara.scan_file_async(sample_path)
+        matches = await self.yara_engine.scan_file_async(sample_path)
         for match in matches:
             self._notify_ui(f"YARA Match: {match}", "WARN")
 
@@ -91,11 +91,52 @@ class Orchestrator:
             self._notify_ui("Executing sample with strace monitoring...")
             await self.db.add_event(analysis_id, "process", 0.1, "INFO", {"msg": "Execution started"})
 
-            strace_cmd = f"chmod +x {guest_sample_path} && strace -ff -tt -o /tmp/strace.log {guest_sample_path}"
+            strace_cmd = f"chmod +x {guest_sample_path} && strace -ff -tt -o /tmp/strace.log {guest_sample_path} &"
             await self.vm_manager.run_command(guest_os, strace_cmd)
 
-            # 5. Collect and Parse results
+            # 5. Memory Scanning and Metadata Extraction
+            self._notify_ui("Running in-guest YARA memory scan...")
+
+            # Prepare rules for injection
+            rules_local_path = "/tmp/analysis_rules.yar"
+            if self.yara_engine.compile_to_file(rules_local_path):
+                self._notify_ui("YARA rules compiled for in-guest scan.")
+            else:
+                self._notify_ui("Failed to compile YARA rules for in-guest scan.", "WARN")
+
+            rules_guest_path = "/tmp/rules.yar"
+            await self.vm_manager.inject_file(guest_os, rules_local_path, rules_guest_path)
+
+            # Ensure YARA is in guest
+            check_yara = await self.vm_manager.run_command(guest_os, "which yara")
+            if not check_yara.strip():
+                self._notify_ui("YARA not found in guest, attempting installation...")
+                await self.vm_manager.run_command(guest_os, "apt-get update && apt-get install -y yara")
+
+            # Scan memory via /proc. Note: using -C for compiled rules
+            yara_cmd = f"yara -C --print-meta --print-strings -r {rules_guest_path} /proc"
+            yara_output = await self.vm_manager.run_command(guest_os, yara_cmd)
+            yara_matches = self.yara_engine.parse_yara_cli_output(yara_output)
+
+            # Enrich matches with process metadata
+            for match in yara_matches:
+                pid = match.get('pid')
+                if pid and pid != "N/A":
+                    # Get process name
+                    match['process_name'] = (await self.vm_manager.run_command(guest_os, f"cat /proc/{pid}/comm")).strip() or "[unreadable]"
+                    # Get exe path
+                    match['exe_path'] = (await self.vm_manager.run_command(guest_os, f"readlink -f /proc/{pid}/exe")).strip() or "[unreadable]"
+                    # Get cmdline
+                    cmdline_raw = await self.vm_manager.run_command(guest_os, f"cat /proc/{pid}/cmdline")
+                    match['cmdline'] = cmdline_raw.replace('\0', ' ').strip() or "[unreadable]"
+
+                self._notify_ui(f"YARA Memory Match: {match['rule']} (PID: {match['pid']})", "WARN")
+                await self.db.add_event(analysis_id, "yara", 0, "WARN", match)
+
+            # 6. Collect and Parse results
             self._notify_ui("Collecting behavioral logs...")
+            # Wait a bit for sample to finish if it hasn't
+            await asyncio.sleep(5)
 
             if run_pcap:
                 self._notify_ui("Stopping packet capture and collecting PCAP...")
@@ -153,7 +194,7 @@ class Orchestrator:
                 finished_at=datetime.now(),
                 threat_score=score,
                 verdict=verdict,
-                yara_matches=matches
+                yara_matches=yara_matches if 'yara_matches' in locals() else matches
             )
 
             # 7. Cleanup
