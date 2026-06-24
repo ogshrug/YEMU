@@ -1,4 +1,7 @@
-from gi.repository import Gtk, Adw
+try:
+    from gi.repository import Gtk, Adw
+except ImportError:
+    Gtk = None
 
 class ReportView(Gtk.Box):
     def __init__(self, **kwargs):
@@ -80,9 +83,12 @@ class ReportView(Gtk.Box):
     def _on_export_pdf(self, btn):
         if not self.current_details: return
 
+        root = self.get_root()
+        if not root: return
+
         dialog = Gtk.FileChooserDialog(
             title="Save PDF Report",
-            parent=self.get_root(),
+            parent=root,
             action=Gtk.FileChooserAction.SAVE,
         )
         dialog.add_button("_Cancel", Gtk.ResponseType.CANCEL)

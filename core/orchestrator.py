@@ -57,12 +57,17 @@ class Orchestrator:
                 md5 = hashlib.md5(data).hexdigest()
 
             sample_id = await self.db.add_sample(sha256, md5, os.path.basename(sample_path), "unknown", len(data))
-            analysis_id = await self.db.create_analysis(sample_id, datetime.now())
+            if sample_id:
+                analysis_id = await self.db.create_analysis(sample_id, datetime.now())
+                if not analysis_id:
+                    self._notify_ui("Failed to create analysis record in database.", "CRITICAL")
+                    return None
+            else:
+                self._notify_ui("Failed to create sample record in database.", "CRITICAL")
+                return None
         except Exception as e:
             self._notify_ui(f"Failed to initialize analysis in database: {e}", "CRITICAL")
-            # If we can't create an analysis record, we probably should stop,
-            # but for the sake of the exercise, we continue as far as possible.
-            # However, analysis_id being None will break later DB calls.
+            return None
 
         try:
             # 2. Verify and Reset VM

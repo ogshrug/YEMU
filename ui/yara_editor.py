@@ -1,5 +1,10 @@
-from gi.repository import Gtk, GLib, Adw
+try:
+    from gi.repository import Gtk, GLib, Adw
+except ImportError:
+    Gtk = None
+
 import os
+from pathlib import Path
 import threading
 import json
 from core.yara_sync import YaraRuleSync
@@ -12,8 +17,8 @@ class YaraEditor(Gtk.Box):
         self.set_margin_top(20)
         self.set_margin_bottom(20)
 
-        self.rules_dir = "rules/yara-rules"
-        os.makedirs(self.rules_dir, exist_ok=True)
+        self.rules_dir = Path("rules/yara-rules")
+        self.rules_dir.mkdir(parents=True, exist_ok=True)
         self.current_file = None
 
         # Sync UI
@@ -101,17 +106,17 @@ class YaraEditor(Gtk.Box):
         self._refresh_file_list()
 
     def _load_manifest(self):
-        manifest_path = os.path.join(self.rules_dir, ".sync_manifest.json")
-        if os.path.exists(manifest_path):
+        manifest_path = self.rules_dir / ".sync_manifest.json"
+        if manifest_path.exists():
             try:
-                with open(manifest_path, 'r') as f:
+                with manifest_path.open('r') as f:
                     data = json.load(f)
                     ts = data.get('timestamp', 'Unknown')
                     count = data.get('file_count', 0)
                     skipped = len(data.get('skipped_files', []))
                     self.last_sync_label.set_label(f"Last sync: {ts}. {count} rules synced, {skipped} skipped.")
-            except Exception:
-                pass
+            except Exception as e:
+                self._log_message(f"Failed to load sync manifest: {e}", "WARN")
 
     def _refresh_file_list(self):
         while True:
@@ -119,12 +124,11 @@ class YaraEditor(Gtk.Box):
             if not row: break
             self.file_list.remove(row)
 
-        for root, _, files in os.walk(self.rules_dir):
-            for f in sorted(files):
-                if (f.endswith(".yar") or f.endswith(".yara")) and not f.startswith("."):
-                    rel_path = os.path.relpath(os.path.join(root, f), self.rules_dir)
-                    row = Adw.ActionRow(title=rel_path)
-                    self.file_list.append(row)
+        for file_path in sorted(self.rules_dir.rglob("*")):
+            if file_path.is_file() and (file_path.suffix in [".yar", ".yara"]) and not file_path.name.startswith("."):
+                rel_path = str(file_path.relative_to(self.rules_dir))
+                row = Adw.ActionRow(title=rel_path)
+                self.file_list.append(row)
 
     def _on_file_selected(self, listbox, row):
         if not row: return
@@ -132,9 +136,19 @@ class YaraEditor(Gtk.Box):
         self.current_file = rel_path
         self.filename_entry.set_text(rel_path)
 
-        path = os.path.join(self.rules_dir, rel_path)
-        with open(path, "r", errors='ignore') as f:
-            self.text_view.get_buffer().set_text(f.read())
+        path = self.rules_dir / rel_path
+        import threading
+        def run_load():
+            try:
+                with path.open("r", errors='ignore') as f:
+                    content = f.read()
+                    GLib.idle_add(self._display_file, content, rel_path)
+            except Exception as e:
+                GLib.idle_add(self.status_label.set_label, f"Failed to load {rel_path}: {e}")
+        threading.Thread(target=run_load, daemon=True).start()
+
+    def _display_file(self, content, rel_path):
+        self.text_view.get_buffer().set_text(content)
         self.status_label.set_label(f"Loaded {rel_path}")
 
     def _on_new_rule(self, btn):
@@ -155,15 +169,22 @@ class YaraEditor(Gtk.Box):
         start, end = buffer.get_bounds()
         content = buffer.get_text(start, end, True)
 
-        path = os.path.join(self.rules_dir, filename)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        try:
-            with open(path, "w") as f:
-                f.write(content)
-            self.status_label.set_label(f"Saved {filename}")
-            self._refresh_file_list()
-        except Exception as e:
-            self.status_label.set_label(f"Save failed: {e}")
+        path = self.rules_dir / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        import threading
+        def run_save():
+            try:
+                with path.open("w") as f:
+                    f.write(content)
+                GLib.idle_add(self._on_save_complete, filename)
+            except Exception as e:
+                GLib.idle_add(self.status_label.set_label, f"Save failed: {e}")
+        threading.Thread(target=run_save, daemon=True).start()
+
+    def _on_save_complete(self, filename):
+        self.status_label.set_label(f"Saved {filename}")
+        self._refresh_file_list()
 
     def _on_sync_clicked(self, btn):
         repo_url = self.repo_entry.get_text()

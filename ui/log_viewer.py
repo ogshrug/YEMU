@@ -1,4 +1,7 @@
-from gi.repository import Gtk, GLib
+try:
+    from gi.repository import Gtk, GLib
+except ImportError:
+    Gtk = None
 
 class LogViewer(Gtk.Box):
     def __init__(self, **kwargs):
