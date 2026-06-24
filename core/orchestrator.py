@@ -60,6 +60,14 @@ class Orchestrator:
             if run_gui:
                 self._notify_ui("Opening VM GUI...")
                 await self.vm_manager.open_gui(guest_os)
+                self._notify_ui("Manual analysis started. VM will remain open.", "INFO")
+                await self.db.update_analysis(
+                    analysis_id,
+                    finished_at=datetime.now(),
+                    verdict="manual",
+                    yara_matches=matches
+                )
+                return analysis_id
 
             # 4. Execute with monitoring
             self._notify_ui("Executing sample with strace monitoring...")
@@ -90,6 +98,14 @@ class Orchestrator:
             score = scorer.compute(findings)
             verdict = scorer.get_verdict(score)
             self._notify_ui(f"Analysis complete. Verdict: {verdict} (Score: {score})", "CRITICAL" if score > 70 else "INFO")
+
+            await self.db.update_analysis(
+                analysis_id,
+                finished_at=datetime.now(),
+                threat_score=score,
+                verdict=verdict,
+                yara_matches=matches
+            )
 
             # 7. Cleanup
             self._notify_ui("Cleaning up VM...")
