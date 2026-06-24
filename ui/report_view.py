@@ -8,7 +8,12 @@ class ReportView(Gtk.Box):
         self.set_margin_top(20)
         self.set_margin_bottom(20)
 
-        self.append(Gtk.Label(label="Analysis Report Details"))
+        self.current_details = None
+        self.current_events = None
+
+        self.title_label = Gtk.Label(label="Analysis Report Details")
+        self.title_label.add_css_class("h2")
+        self.append(self.title_label)
 
         # IOC Table
         self.ioc_list = Gtk.ListBox()
@@ -19,9 +24,59 @@ class ReportView(Gtk.Box):
         scrolled.set_child(self.ioc_list)
         self.append(scrolled)
 
-        export_btn = Gtk.Button(label="Export to PDF")
-        self.append(export_btn)
+        self.export_btn = Gtk.Button(label="Export to PDF")
+        self.export_btn.set_sensitive(False)
+        self.export_btn.connect("clicked", self._on_export_pdf)
+        self.append(self.export_btn)
+
+    def update_report(self, details, events):
+        self.current_details = details
+        self.current_events = events
+        self.title_label.set_label(f"Report: {details['filename']}")
+        self.export_btn.set_sensitive(True)
+
+        # Clear list
+        while True:
+            row = self.ioc_list.get_first_child()
+            if not row: break
+            self.ioc_list.remove(row)
+
+        # Add some key info as "IOCs"
+        import json
+        yara_matches = json.loads(details['yara_matches']) if details['yara_matches'] else []
+        for match in yara_matches:
+            self.add_ioc("YARA", match)
+
+        for ev in events:
+            det = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
+            if ev['event_type'] == 'network':
+                self.add_ioc("Network", f"{det.get('dst_ip')}:{det.get('dst_port')}")
 
     def add_ioc(self, ioc_type, value):
         row = Adw.ActionRow(title=value, subtitle=ioc_type)
         self.ioc_list.append(row)
+
+    def _on_export_pdf(self, btn):
+        if not self.current_details: return
+
+        dialog = Gtk.FileChooserDialog(
+            title="Save PDF Report",
+            parent=self.get_root(),
+            action=Gtk.FileChooserAction.SAVE,
+        )
+        dialog.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("_Save", Gtk.ResponseType.ACCEPT)
+        dialog.set_current_name(f"report_{self.current_details['id']}.pdf")
+
+        dialog.connect("response", self._on_save_response)
+        dialog.present()
+
+    def _on_save_response(self, dialog, response):
+        if response == Gtk.ResponseType.ACCEPT:
+            path = dialog.get_file().get_path()
+            if not path.endswith(".pdf"): path += ".pdf"
+
+            from core.report_generator import PDFGenerator
+            gen = PDFGenerator(path)
+            gen.generate(self.current_details, self.current_events)
+        dialog.destroy()

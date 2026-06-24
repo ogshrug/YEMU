@@ -284,3 +284,25 @@ class VMManager:
         except Exception as e:
             self.logger.error(f"Failed to open GUI: {e}")
             return False
+
+    async def pull_file(self, vm_name, guest_path, local_path):
+        self.logger.info(f"Pulling {vm_name}:{guest_path} to {local_path}")
+        cmd = ["virt-copy-out", "-d", vm_name, guest_path, os.path.dirname(local_path)]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                self.logger.error(f"virt-copy-out failed: {stderr.decode()}")
+                return False
+
+            # virt-copy-out copies to the directory, we might need to rename if local_path is different
+            filename = os.path.basename(guest_path)
+            downloaded_path = os.path.join(os.path.dirname(local_path), filename)
+            if downloaded_path != local_path:
+                os.rename(downloaded_path, local_path)
+            return True
+        except Exception as e:
+            self.logger.error(f"Pull failed: {e}")
+            return False

@@ -7,6 +7,39 @@ import os
 import subprocess
 
 class MainWindow(Adw.ApplicationWindow):
+    def _on_analysis_selected(self, listbox, row):
+        if not row:
+            return
+        analysis_id = row.analysis_id
+
+        import asyncio
+        import threading
+
+        def load_details():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            details = loop.run_until_complete(self.db.get_analysis_details(analysis_id))
+            events = loop.run_until_complete(self.db.get_analysis_events(analysis_id))
+            GLib.idle_add(self._display_analysis_details, details, events)
+
+        threading.Thread(target=load_details, daemon=True).start()
+
+    def _display_analysis_details(self, details, events):
+        if not details:
+            return
+
+        import json
+        yara_matches = json.loads(details['yara_matches']) if details['yara_matches'] else []
+
+        self.dashboard.update_data(
+            details['threat_score'] or 0,
+            len(yara_matches),
+            0, # TODO: IOC count
+            events=events
+        )
+        self.report_view.update_report(details, events)
+        self.stack.set_visible_child_name("dashboard")
+
     def _on_submit_clicked(self, btn):
         dialog = Gtk.FileChooserDialog(
             title="Select File for Analysis",
@@ -23,6 +56,7 @@ class MainWindow(Adw.ApplicationWindow):
         if response == Gtk.ResponseType.ACCEPT:
             file_path = dialog.get_file().get_path()
             run_gui = self.gui_switch.get_active()
+            run_pcap = self.pcap_switch.get_active()
 
             vm_item = self.vm_dropdown.get_selected_item()
             snap_item = self.snapshot_dropdown.get_selected_item()
@@ -30,10 +64,16 @@ class MainWindow(Adw.ApplicationWindow):
             vm_name = vm_item.get_string() if vm_item else None
             snap_name = snap_item.get_string() if snap_item else None
 
-            self._start_analysis(file_path, vm_name, snap_name, run_gui)
+            self._start_analysis(file_path, vm_name, snap_name, run_gui, run_pcap)
         dialog.destroy()
 
-    def _start_analysis(self, filename, vm_name, snap_name, run_gui):
+    def _start_analysis(self, filename, vm_name, snap_name, run_gui, run_pcap):
+        if hasattr(self, "_analysis_running") and self._analysis_running:
+            self._append_log("Analysis already in progress. Please wait.", "WARN")
+            return
+
+        self._analysis_running = True
+        self.upload_btn.set_sensitive(False)
         self._append_log(f"Submitting {filename} for analysis on {vm_name} ({snap_name})...", "INFO")
 
         import threading
@@ -45,16 +85,46 @@ class MainWindow(Adw.ApplicationWindow):
                 filename,
                 guest_os=vm_name,
                 snapshot_name=snap_name,
-                run_gui=run_gui
+                run_gui=run_gui,
+                run_pcap=run_pcap
             ))
             GLib.idle_add(self._on_analysis_complete)
 
         threading.Thread(target=run_async, daemon=True).start()
 
     def _on_analysis_complete(self):
+        self._analysis_running = False
+        self._validate_submit()
         self._append_log("Analysis complete. Check the dashboard for results.", "INFO")
-        # In a real app, we'd pull this from the DB
-        self.dashboard.update_data(87, 4, 12)
+        self._update_recent_analyses()
+
+    def _update_recent_analyses(self):
+        import asyncio
+        import threading
+
+        def fetch_analyses():
+            if not hasattr(self.db, 'conn'):
+                return
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            analyses = loop.run_until_complete(self.db.get_recent_analyses())
+            GLib.idle_add(self._populate_analysis_list, analyses)
+
+        threading.Thread(target=fetch_analyses, daemon=True).start()
+
+    def _populate_analysis_list(self, analyses):
+        # Clear current list
+        while True:
+            row = self.analysis_list.get_first_child()
+            if not row:
+                break
+            self.analysis_list.remove(row)
+
+        for analysis in analyses:
+            row = Adw.ActionRow(title=analysis['filename'])
+            row.set_subtitle(f"{analysis['verdict'] or 'unknown'} - Score: {analysis['threat_score'] or 0}")
+            row.analysis_id = analysis['id']
+            self.analysis_list.append(row)
 
     def _on_prepare_vm_clicked(self, btn):
         script = os.path.join(os.path.dirname(__file__), "prepare_vm.sh")
@@ -91,6 +161,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._validate_submit()
 
     def _validate_submit(self):
+        if hasattr(self, "_analysis_running") and self._analysis_running:
+            self.upload_btn.set_sensitive(False)
+            return
+
         vm_selected = False
         snap_selected = False
 
@@ -138,6 +212,14 @@ class MainWindow(Adw.ApplicationWindow):
         gui_box.append(self.gui_switch)
         upload_box.append(gui_box)
 
+        pcap_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        pcap_box.set_valign(Gtk.Align.CENTER)
+        pcap_label = Gtk.Label(label="Packet Level Info")
+        self.pcap_switch = Gtk.CheckButton()
+        pcap_box.append(pcap_label)
+        pcap_box.append(self.pcap_switch)
+        upload_box.append(pcap_box)
+
         self.prepare_btn = Gtk.Button(label="Prepare New VM")
         self.prepare_btn.connect("clicked", self._on_prepare_vm_clicked)
         upload_box.append(self.prepare_btn)
@@ -172,9 +254,18 @@ class MainWindow(Adw.ApplicationWindow):
         sidebar.add_css_class("sidebar")
         paned.set_start_child(sidebar)
 
-        sidebar.append(Gtk.Label(label="RECENT ANALYSES"))
+        label = Gtk.Label(label="RECENT ANALYSES")
+        label.add_css_class("caption")
+        sidebar.append(label)
+
         self.analysis_list = Gtk.ListBox()
-        sidebar.append(self.analysis_list)
+        self.analysis_list.add_css_class("navigation-sidebar")
+        self.analysis_list.connect("row-selected", self._on_analysis_selected)
+
+        scrolled_sidebar = Gtk.ScrolledWindow()
+        scrolled_sidebar.set_vexpand(True)
+        scrolled_sidebar.set_child(self.analysis_list)
+        sidebar.append(scrolled_sidebar)
 
         # Content Stack
         self.stack = Gtk.Stack()
@@ -211,6 +302,7 @@ class MainWindow(Adw.ApplicationWindow):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(self.db.connect())
+            GLib.idle_add(self._update_recent_analyses)
 
         threading.Thread(target=init_db, daemon=True).start()
 
