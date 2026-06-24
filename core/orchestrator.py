@@ -23,9 +23,10 @@ class Orchestrator:
         from core.yara_engine import YaraEngine
         self.yara_engine = YaraEngine()
         self._notify_ui("Running YARA static analysis...")
-        matches = await self.yara_engine.scan_file_async(sample_path)
-        for match in matches:
-            self._notify_ui(f"YARA Match: {match}", "WARN")
+        static_matches = await self.yara_engine.scan_file_async(sample_path)
+        for match in static_matches:
+            match['source'] = 'static'
+            self._notify_ui(f"YARA Static Match: {match['rule']}", "WARN")
 
         # 1. Prepare Sample metadata
         import hashlib
@@ -74,7 +75,7 @@ class Orchestrator:
                     analysis_id,
                     finished_at=datetime.now(),
                     verdict="manual",
-                    yara_matches=matches
+                    yara_matches=static_matches
                 )
                 return analysis_id
 
@@ -116,10 +117,11 @@ class Orchestrator:
             # Scan memory via /proc. Note: using -C for compiled rules
             yara_cmd = f"yara -C --print-meta --print-strings -r {rules_guest_path} /proc"
             yara_output = await self.vm_manager.run_command(guest_os, yara_cmd)
-            yara_matches = self.yara_engine.parse_yara_cli_output(yara_output)
+            memory_matches = self.yara_engine.parse_yara_cli_output(yara_output)
 
             # Enrich matches with process metadata
-            for match in yara_matches:
+            for match in memory_matches:
+                match['source'] = 'memory'
                 pid = match.get('pid')
                 if pid and pid != "N/A":
                     # Get process name
@@ -181,9 +183,12 @@ class Orchestrator:
             self._notify_ui("Computing threat score...")
             from core.threat_scorer import ThreatScorer
             scorer = ThreatScorer()
+
+            all_yara_matches = static_matches + (memory_matches if 'memory_matches' in locals() else [])
+
             findings = {
-                "yara_count": len(matches),
-                "syscall_alerts": len(events)
+                "yara_count": len(all_yara_matches),
+                "syscall_alerts": len(all_events)
             }
             score = scorer.compute(findings)
             verdict = scorer.get_verdict(score)
@@ -194,7 +199,7 @@ class Orchestrator:
                 finished_at=datetime.now(),
                 threat_score=score,
                 verdict=verdict,
-                yara_matches=yara_matches if 'yara_matches' in locals() else matches
+                yara_matches=all_yara_matches
             )
 
             # 7. Cleanup

@@ -46,7 +46,39 @@ class PDFGenerator:
         yara_matches = json.loads(details['yara_matches']) if details['yara_matches'] else []
         if yara_matches:
             for match in yara_matches:
-                elements.append(Paragraph(f"• {match}", self.styles['Normal']))
+                if isinstance(match, dict):
+                    rule = match.get('rule', 'unknown')
+                    source = match.get('source', 'unknown').upper()
+                    elements.append(Paragraph(f"Rule: <b>{rule}</b> ({source})", self.styles['Normal']))
+
+                    # Meta & Tags
+                    tags = match.get('tags', [])
+                    if tags:
+                        elements.append(Paragraph(f"<i>Tags: {', '.join(tags)}</i>", self.styles['Normal']))
+
+                    meta = match.get('meta', {})
+                    if meta:
+                        for k, v in meta.items():
+                            elements.append(Paragraph(f"  - {k}: {v}", self.styles['Normal']))
+
+                    # Process context
+                    if source == 'MEMORY':
+                        pid = match.get('pid', 'N/A')
+                        proc = match.get('process_name', 'unknown')
+                        path = match.get('exe_path', 'unknown')
+                        elements.append(Paragraph(f"  Context: PID {pid} ({proc}) - {path}", self.styles['Normal']))
+
+                    # Strings
+                    strings = match.get('strings', [])
+                    if strings:
+                        elements.append(Paragraph("  Matched Strings:", self.styles['Normal']))
+                        for s in strings[:10]: # Limit to top 10 strings
+                            elements.append(Paragraph(f"    {s['offset']}:{s['identifier']}: {s['data']}", self.styles['Normal']))
+                        if len(strings) > 10:
+                            elements.append(Paragraph(f"    ... and {len(strings)-10} more", self.styles['Normal']))
+                else:
+                    elements.append(Paragraph(f"• {match}", self.styles['Normal']))
+                elements.append(Spacer(1, 6))
         else:
             elements.append(Paragraph("No YARA matches found.", self.styles['Normal']))
         elements.append(Spacer(1, 12))

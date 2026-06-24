@@ -44,7 +44,10 @@ class ReportView(Gtk.Box):
         # Add some key info as "IOCs"
         import json
         yara_matches = json.loads(details['yara_matches']) if details['yara_matches'] else []
+
+        has_content = False
         for match in yara_matches:
+            has_content = True
             if isinstance(match, dict):
                 rule = match.get('rule', 'unknown')
                 pid = match.get('pid', 'N/A')
@@ -57,7 +60,12 @@ class ReportView(Gtk.Box):
         for ev in events:
             det = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
             if ev['event_type'] == 'network':
+                has_content = True
                 self.add_ioc("Network", f"{det.get('dst_ip')}:{det.get('dst_port')}")
+
+        if not has_content:
+            row = Adw.ActionRow(title="No IOCs detected during analysis.", subtitle="Clean")
+            self.ioc_list.append(row)
 
     def add_ioc(self, ioc_type, value):
         row = Adw.ActionRow(title=value, subtitle=ioc_type)

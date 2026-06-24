@@ -76,6 +76,52 @@ class Dashboard(Gtk.Box):
                 if not row: break
                 lb.remove(row)
 
+        # Build Process Hierarchy
+        processes = {} # pid -> {details, children: []}
+        root_pids = []
+
+        for ev in events:
+            details = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
+            ev_type = ev['event_type']
+
+            if ev_type == 'process':
+                pid = str(details.get('pid'))
+                ppid = str(details.get('ppid'))
+
+                if pid not in processes:
+                    processes[pid] = {'details': details, 'children': []}
+                else:
+                    # Update details if we have more info (like from execve)
+                    if details.get('action') == 'execute' or processes[pid]['details'].get('process_name') == 'unknown':
+                        processes[pid]['details'].update(details)
+
+                if ppid != "unknown" and ppid != "None" and ppid != "0":
+                    if ppid not in processes:
+                        processes[ppid] = {'details': {'process_name': 'unknown', 'pid': ppid}, 'children': []}
+                    if pid not in processes[ppid]['children']:
+                        processes[ppid]['children'].append(pid)
+                elif pid not in root_pids:
+                    root_pids.append(pid)
+
+        def add_proc_row(pid, depth=0):
+            proc = processes.get(pid)
+            if not proc: return
+            det = proc['details']
+
+            row = Adw.ActionRow()
+            indent = "  " * depth
+            name = det.get('process_name', 'unknown')
+            action = det.get('action', '')
+            row.set_title(f"{indent}PID {pid}: {name} ({action})")
+            row.set_subtitle(f"{indent}Path: {det.get('path', 'N/A')}")
+            self.proc_tree.append(row)
+
+            for child_pid in proc['children']:
+                add_proc_row(child_pid, depth + 1)
+
+        for root_pid in root_pids:
+            add_proc_row(root_pid)
+
         for ev in events:
             details = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
             ev_type = ev['event_type']
@@ -86,8 +132,9 @@ class Dashboard(Gtk.Box):
                 pid = details.get('pid', 'N/A')
                 proc = details.get('process_name', 'unknown')
                 path = details.get('path', details.get('exe_path', '[unreadable]'))
+                source = details.get('source', 'unknown')
 
-                row.set_title(f"[MATCH] Rule: {rule}  |  PID: {pid}  |  Process: {proc}")
+                row.set_title(f"[{source.upper()}] Rule: {rule}  |  PID: {pid}  |  Process: {proc}")
                 row.set_subtitle(f"Path: {path}")
 
                 # Add tags and meta
@@ -119,14 +166,15 @@ class Dashboard(Gtk.Box):
 
             row = Adw.ActionRow()
             if ev_type == 'process':
-                row.set_title(f"PID {details.get('pid', 'N/A')}: {details.get('action', 'unknown')}")
-                row.set_subtitle(details.get('path', ''))
-                self.proc_tree.append(row)
+                continue # Already handled by process tree
             elif ev_type == 'network':
                 row.set_title(f"{details.get('dst_ip', 'N/A')}:{details.get('dst_port', 'N/A')}")
                 row.set_subtitle(details.get('syscall', 'connect'))
                 self.net_view.append(row)
             elif ev_type == 'file':
-                row.set_title(f"{details.get('action', 'unknown').upper()}: {details.get('path', 'N/A')}")
+                path = details.get('path')
+                if not path and details.get('fd'):
+                    path = f"File Descriptor: {details.get('fd')}"
+                row.set_title(f"{details.get('action', 'unknown').upper()}: {path or 'N/A'}")
                 row.set_subtitle(details.get('syscall', ''))
                 self.file_view.append(row)
