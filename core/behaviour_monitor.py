@@ -13,6 +13,7 @@ class BehaviourMonitor:
         Example line: 10:15:30.123456 openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = 3
         """
         events = []
+        current_pid = pid
         for line in log_lines:
             # Extract timestamp if present (-tt)
             timestamp = 0
@@ -26,14 +27,16 @@ class BehaviourMonitor:
                 except:
                     pass
 
-            proc_info = self.process_info.get(pid, {
+            proc_info = self.process_info.get(current_pid, {
                 "process_name": "unknown",
                 "exe_path": "[unreadable]",
-                "cmdline": "[unreadable]"
+                "cmdline": "[unreadable]",
+                "ppid": "unknown"
             })
 
             base_event = {
-                "pid": pid or "N/A",
+                "pid": current_pid or "N/A",
+                "ppid": proc_info.get("ppid", "unknown"),
                 "process_name": proc_info["process_name"],
                 "exe_path": proc_info["exe_path"],
                 "cmdline": proc_info["cmdline"],
@@ -54,13 +57,14 @@ class BehaviourMonitor:
                         args = args_match.group(1).replace('"', '').split(', ')
                         cmdline = " ".join(args)
 
-                    self.process_info[pid] = {
+                    self.process_info[current_pid] = {
                         "process_name": process_name,
                         "exe_path": exe_path,
-                        "cmdline": cmdline
+                        "cmdline": cmdline,
+                        "ppid": proc_info.get("ppid", "unknown")
                     }
                     # Update base_event for the current line
-                    base_event.update(self.process_info[pid])
+                    base_event.update(self.process_info[current_pid])
 
                     events.append({**base_event,
                         "type": "process",
@@ -90,9 +94,22 @@ class BehaviourMonitor:
                         "syscall": "connect"
                     })
             elif 'clone' in line or 'fork' in line:
+                # clone(...) = 1234
+                new_pid_match = re.search(r'=\s+(\d+)$', line.strip())
+                new_pid = new_pid_match.group(1) if new_pid_match else "unknown"
+
+                if new_pid != "unknown" and current_pid:
+                    self.process_info[new_pid] = {
+                        "process_name": proc_info["process_name"], # Initially same as parent
+                        "exe_path": proc_info["exe_path"],
+                        "cmdline": proc_info["cmdline"],
+                        "ppid": current_pid
+                    }
+
                 events.append({**base_event,
                     "type": "process",
                     "action": "fork",
+                    "child_pid": new_pid,
                     "syscall": "clone" if "clone" in line else "fork"
                 })
             elif 'unlink' in line:
