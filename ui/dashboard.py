@@ -131,13 +131,15 @@ class Dashboard(Gtk.Box):
             if ev_type == 'yara':
                 row = Adw.ExpanderRow()
                 rule = details.get('rule', 'unknown')
+                source = details.get('source', 'unknown').upper()
+
+                row.set_title(f"[{source}] Rule: {rule}")
+
+                # Info in subtitle or expanded
                 pid = details.get('pid', 'N/A')
                 proc = details.get('process_name', 'unknown')
                 path = details.get('path', details.get('exe_path', '[unreadable]'))
-                source = details.get('source', 'unknown')
-
-                row.set_title(f"[{source.upper()}] Rule: {rule}  |  PID: {pid}  |  Process: {proc}")
-                row.set_subtitle(f"Path: {path}")
+                row.set_subtitle(f"PID: {pid} | Process: {proc}")
 
                 # Add tags and meta
                 tags = details.get('tags', [])
@@ -150,6 +152,7 @@ class Dashboard(Gtk.Box):
                 info_box.set_margin_top(10)
                 info_box.set_margin_bottom(10)
 
+                info_box.append(Gtk.Label(label=f"Full Path: {path}", xalign=0))
                 info_box.append(Gtk.Label(label=f"Tags: {', '.join(tags) if tags else 'none'}", xalign=0))
                 info_box.append(Gtk.Label(label=f"Description: {desc}", xalign=0))
 
@@ -158,7 +161,19 @@ class Dashboard(Gtk.Box):
                 if strings:
                     info_box.append(Gtk.Label(label="Matched Strings:", xalign=0))
                     for s in strings:
-                        s_label = Gtk.Label(label=f"  {s['offset']}:{s['identifier']}: {s['data']} ({s.get('printable', '')})", xalign=0)
+                        # Handle both dict and object formats
+                        if isinstance(s, dict):
+                            offset = s.get('offset', '0x0')
+                            identifier = s.get('identifier', '$?')
+                            data = s.get('data', '')
+                            printable = s.get('printable', '')
+                        else:
+                            offset = getattr(s, 'offset', '0x0')
+                            identifier = getattr(s, 'identifier', '$?')
+                            data = getattr(s, 'data', '')
+                            printable = getattr(s, 'printable', '')
+
+                        s_label = Gtk.Label(label=f"  {offset}:{identifier}: {data} ({printable})", xalign=0)
                         s_label.add_css_class("dim-label")
                         info_box.append(s_label)
 
