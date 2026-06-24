@@ -17,3 +17,4 @@ rules/yara-rules/.sync_manifest.json
 storage/malware.db
 reports/*.pdf
 reports/*.json
+malware_sandbox.db
