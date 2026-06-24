@@ -12,7 +12,8 @@ dist/
 *.swp
 *.log
 malicious_sample.elf
-rules/yara-rules/
+rules/yara-rules/*/
+rules/yara-rules/.sync_manifest.json
 storage/malware.db
 reports/*.pdf
 reports/*.json
