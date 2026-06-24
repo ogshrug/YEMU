@@ -1,9 +1,11 @@
 import re
 import logging
+import os
 
 class BehaviourMonitor:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self.process_info = {} # Store info about PIDs
 
     def parse_strace(self, log_lines, pid=None):
         """
@@ -24,13 +26,49 @@ class BehaviourMonitor:
                 except:
                     pass
 
+            proc_info = self.process_info.get(pid, {
+                "process_name": "unknown",
+                "exe_path": "[unreadable]",
+                "cmdline": "[unreadable]"
+            })
+
             base_event = {
-                "pid": pid,
+                "pid": pid or "N/A",
+                "process_name": proc_info["process_name"],
+                "exe_path": proc_info["exe_path"],
+                "cmdline": proc_info["cmdline"],
                 "timestamp": timestamp,
                 "raw": line.strip()
             }
 
-            if 'openat' in line or 'open(' in line:
+            if 'execve' in line:
+                match = re.search(r'execve\("(.*?)"', line)
+                if match:
+                    exe_path = match.group(1)
+                    process_name = os.path.basename(exe_path)
+
+                    # Try to extract cmdline from arguments
+                    cmdline = exe_path
+                    args_match = re.search(r'execve\(".*?", \[(.*?)\]', line)
+                    if args_match:
+                        args = args_match.group(1).replace('"', '').split(', ')
+                        cmdline = " ".join(args)
+
+                    self.process_info[pid] = {
+                        "process_name": process_name,
+                        "exe_path": exe_path,
+                        "cmdline": cmdline
+                    }
+                    # Update base_event for the current line
+                    base_event.update(self.process_info[pid])
+
+                    events.append({**base_event,
+                        "type": "process",
+                        "action": "execute",
+                        "path": exe_path,
+                        "syscall": "execve"
+                    })
+            elif 'openat' in line or 'open(' in line:
                 match = re.search(r'open(?:at)?\(.*?"(.*?)"', line)
                 if match:
                     events.append({**base_event,
@@ -38,15 +76,6 @@ class BehaviourMonitor:
                         "action": "open",
                         "path": match.group(1),
                         "syscall": "openat" if "openat" in line else "open"
-                    })
-            elif 'execve' in line:
-                match = re.search(r'execve\("(.*?)"', line)
-                if match:
-                    events.append({**base_event,
-                        "type": "process",
-                        "action": "execute",
-                        "path": match.group(1),
-                        "syscall": "execve"
                     })
             elif 'connect' in line:
                 # connect(3, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("1.2.3.4")}, 16)

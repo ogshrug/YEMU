@@ -417,6 +417,25 @@ class MockVMManager:
     async def run_command(self, vm_name, command, shell="/bin/sh"):
         if "strace" in command:
             return "execve('/bin/ls', ['ls'], 0x7ffd989c8d30) = 0\nopenat(AT_FDCWD, '.', O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3"
+        if "yara" in command and "/proc" in command:
+            return """
+suspicious_process [malware,stealer] /proc/1234/mem
+description: "Matched a suspicious pattern in memory"
+author: "MalSandbox"
+0x10000:$s1: 58 50 45 4e 44 41 54 41
+0x10500:$s2: malicious_function_name
+
+packer_match [packer] /proc/5678/mem
+0x20000:$p1: UPX!
+"""
+        if "cat /proc/1234/comm" in command: return "suspicious.elf"
+        if "readlink -f /proc/1234/exe" in command: return "/tmp/suspicious.elf"
+        if "cat /proc/1234/cmdline" in command: return "/tmp/suspicious.elf --payload"
+
+        if "cat /proc/5678/comm" in command: return "loader"
+        if "readlink -f /proc/5678/exe" in command: return "/usr/bin/loader"
+        if "cat /proc/5678/cmdline" in command: return "/usr/bin/loader -d"
+
         return "mock output"
 
     async def verify_environment(self, vm_name):

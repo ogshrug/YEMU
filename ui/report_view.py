@@ -45,7 +45,14 @@ class ReportView(Gtk.Box):
         import json
         yara_matches = json.loads(details['yara_matches']) if details['yara_matches'] else []
         for match in yara_matches:
-            self.add_ioc("YARA", match)
+            if isinstance(match, dict):
+                rule = match.get('rule', 'unknown')
+                pid = match.get('pid', 'N/A')
+                proc = match.get('process_name', 'unknown')
+                val = f"Rule: {rule} (PID: {pid}, Proc: {proc})"
+                self.add_ioc("YARA", val)
+            else:
+                self.add_ioc("YARA", str(match))
 
         for ev in events:
             det = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']

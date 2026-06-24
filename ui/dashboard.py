@@ -35,6 +35,9 @@ class Dashboard(Gtk.Box):
         self.file_view = Gtk.ListBox()
         self.notebook.append_page(self._create_scrolled(self.file_view), Gtk.Label(label="File Events"))
 
+        self.yara_view = Gtk.ListBox()
+        self.notebook.append_page(self._create_scrolled(self.yara_view), Gtk.Label(label="YARA Matches"))
+
     def _create_scrolled(self, widget):
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
@@ -67,7 +70,7 @@ class Dashboard(Gtk.Box):
         from gi.repository import Adw
 
         # Clear lists
-        for lb in [self.proc_tree, self.net_view, self.file_view]:
+        for lb in [self.proc_tree, self.net_view, self.file_view, self.yara_view]:
             while True:
                 row = lb.get_first_child()
                 if not row: break
@@ -76,6 +79,43 @@ class Dashboard(Gtk.Box):
         for ev in events:
             details = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
             ev_type = ev['event_type']
+
+            if ev_type == 'yara':
+                row = Adw.ExpanderRow()
+                rule = details.get('rule', 'unknown')
+                pid = details.get('pid', 'N/A')
+                proc = details.get('process_name', 'unknown')
+                path = details.get('path', details.get('exe_path', '[unreadable]'))
+
+                row.set_title(f"[MATCH] Rule: {rule}  |  PID: {pid}  |  Process: {proc}")
+                row.set_subtitle(f"Path: {path}")
+
+                # Add tags and meta
+                tags = details.get('tags', [])
+                meta = details.get('meta', {})
+                desc = meta.get('description', 'N/A')
+
+                info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+                info_box.set_margin_start(15)
+                info_box.set_margin_end(15)
+                info_box.set_margin_top(10)
+                info_box.set_margin_bottom(10)
+
+                info_box.append(Gtk.Label(label=f"Tags: {', '.join(tags) if tags else 'none'}", xalign=0))
+                info_box.append(Gtk.Label(label=f"Description: {desc}", xalign=0))
+
+                # Add strings
+                strings = details.get('strings', [])
+                if strings:
+                    info_box.append(Gtk.Label(label="Matched Strings:", xalign=0))
+                    for s in strings:
+                        s_label = Gtk.Label(label=f"  {s['offset']}:{s['identifier']}: {s['data']} ({s.get('printable', '')})", xalign=0)
+                        s_label.add_css_class("dim-label")
+                        info_box.append(s_label)
+
+                row.add_row(info_box)
+                self.yara_view.append(row)
+                continue
 
             row = Adw.ActionRow()
             if ev_type == 'process':

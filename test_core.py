@@ -33,7 +33,8 @@ def test_yara_engine():
     engine = YaraEngine(rules_dir="test_rules")
     matches = engine.scan_file("test_sample.txt")
 
-    assert any("test_rule" in m for m in matches)
+    print(f"Matches: {matches}")
+    assert any(m["rule"] == "test_rule" for m in matches)
 
     os.remove("test_sample.txt")
     shutil.rmtree("test_rules")
