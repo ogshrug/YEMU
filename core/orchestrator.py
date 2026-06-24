@@ -7,7 +7,7 @@ from core.vm_manager import VMManager
 class Orchestrator:
     def __init__(self, db, vm_manager=None, ui_callback=None):
         self.db = db
-        self.vm_manager = vm_manager or VMManager()
+        self.vm_manager = vm_manager or VMManager(ui_callback=ui_callback)
         self.logger = logging.getLogger(__name__)
         self.ui_callback = ui_callback
 
@@ -40,22 +40,31 @@ class Orchestrator:
         try:
             # 2. Verify and Reset VM
             self._notify_ui("Verifying VM environment...")
-            ok, msg = await self.vm_manager.verify_environment(guest_os)
-            if not ok:
-                raise RuntimeError(msg)
+            try:
+                ok, msg = await self.vm_manager.verify_environment(guest_os)
+                if not ok:
+                    self._notify_ui(f"VM verification failed: {msg}", "CRITICAL")
+                    raise RuntimeError(msg)
 
-            self._notify_ui(f"Reverting VM to snapshot {snapshot_name}...")
-            await self.vm_manager.revert_to_snapshot(guest_os, snapshot_name=snapshot_name)
+                self._notify_ui(f"Reverting VM to snapshot {snapshot_name}...")
+                await self.vm_manager.revert_to_snapshot(guest_os, snapshot_name=snapshot_name)
 
-            self._notify_ui("Injecting sample into VM...")
-            # We explicitly tell VMManager to name it 'malware_sample' in /
-            guest_sample_path = "/malware_sample"
-            await self.vm_manager.inject_file(guest_os, sample_path, guest_sample_path)
+                self._notify_ui("Injecting sample into VM...")
+                # We explicitly tell VMManager to name it 'malware_sample' in /
+                guest_sample_path = "/malware_sample"
+                if not await self.vm_manager.inject_file(guest_os, sample_path, guest_sample_path):
+                    self._notify_ui("Failed to inject sample. Continuing anyway...", "WARN")
 
-            self._notify_ui("Starting VM and waiting for guest agent...")
-            started = await self.vm_manager.start_vm(guest_os)
-            if not started:
-                raise RuntimeError("Failed to start VM or guest agent timed out.")
+                self._notify_ui("Starting VM and waiting for guest agent...")
+                started = await self.vm_manager.start_vm(guest_os)
+                if not started:
+                    self._notify_ui("Failed to start VM.", "CRITICAL")
+                    raise RuntimeError("Failed to start VM.")
+
+                await self.vm_manager.wait_for_guest_agent(guest_os)
+            except Exception as e:
+                self._notify_ui(f"VM Preparation error: {e}", "CRITICAL")
+                raise
 
             if run_gui:
                 self._notify_ui("Opening VM GUI...")
