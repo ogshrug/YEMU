@@ -58,12 +58,11 @@ class Dashboard(Gtk.Box):
         return card
 
     def update_data(self, score, yara_count, ioc_count, events=None):
-        self.score_card.get_last_child().set_label(str(score))
-        self.yara_card.get_last_child().set_label(str(yara_count))
-        self.ioc_card.get_last_child().set_label(str(ioc_count))
+        self.score_card.get_last_child().set_label(str(score or 0))
+        self.yara_card.get_last_child().set_label(str(yara_count or 0))
+        self.ioc_card.get_last_child().set_label(str(ioc_count or 0))
 
-        if events:
-            self._populate_events(events)
+        self._populate_events(events or [])
 
     def _populate_events(self, events):
         import json

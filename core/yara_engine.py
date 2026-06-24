@@ -102,21 +102,20 @@ class YaraEngine:
         }
 
     def scan_file(self, filepath):
+        results = []
         if not self.rules:
             self.logger.error("No YARA rules loaded for scan_file")
-            return []
+            return results
         try:
             self.logger.info(f"Scanning file: {filepath}")
             matches = self.rules.match(filepath)
-            results = []
             for m in matches:
                 res = self._format_match(m)
                 res["path"] = filepath
                 results.append(res)
-            return results
         except Exception as e:
             self.logger.error(f"Error scanning file {filepath}: {e}")
-            return []
+        return results
 
     async def scan_file_async(self, filepath):
         loop = asyncio.get_running_loop()
@@ -124,16 +123,17 @@ class YaraEngine:
             return await loop.run_in_executor(pool, self.scan_file, filepath)
 
     def scan_memory(self, dump_path):
+        results = []
         if not self.rules:
             self.logger.error("No YARA rules loaded for scan_memory")
-            return []
+            return results
         try:
             self.logger.info(f"Scanning memory: {dump_path}")
             matches = self.rules.match(dump_path)
-            return [self._format_match(m) for m in matches]
+            results = [self._format_match(m) for m in matches]
         except Exception as e:
             self.logger.error(f"Error scanning memory dump {dump_path}: {e}")
-            return []
+        return results
 
     def compile_to_file(self, filepath):
         """Saves the compiled rules to a binary file for use with YARA CLI."""
