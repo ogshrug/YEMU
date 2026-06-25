@@ -126,3 +126,5 @@ class ReportView(Gtk.Box):
         toast.set_timeout(5)
         if hasattr(root, 'add_toast'):
             root.add_toast(toast)
+        else:
+            print(f"Export result: {message}")

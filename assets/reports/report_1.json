@@ -1,0 +1,8 @@
+{
+    "filename": "test_sample.bin",
+    "sha256": "b5a2c96250612366ea272ffac6d9744aaf4b45aacd96aa7cfcb931ee3b558259",
+    "md5": "275876e34cf609db118f3d84b799a790",
+    "score": 0,
+    "verdict": "clean",
+    "yara_matches": []
+}

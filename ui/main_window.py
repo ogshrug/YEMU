@@ -307,14 +307,21 @@ class MainWindow(Adw.ApplicationWindow):
             self._append_log(f"Failed to check group permissions: {e}", "WARN")
             return True # Assume OK if check fails
 
+    def add_toast(self, toast):
+        self.toast_overlay.add_toast(toast)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_title("Malware Sandbox")
         self.set_default_size(1200, 900)
 
+        # Toast Overlay
+        self.toast_overlay = Adw.ToastOverlay()
+        self.set_content(self.toast_overlay)
+
         # Main Layout
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_content(self.main_box)
+        self.toast_overlay.set_child(self.main_box)
 
         # Header
         self.header = Adw.HeaderBar()
