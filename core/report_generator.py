@@ -1,5 +1,6 @@
 import json
 import logging
+from xml.sax.saxutils import escape
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -27,19 +28,20 @@ class PDFGenerator:
         elements = []
 
         # Title
-        elements.append(Paragraph(f"Analysis Report: {details['filename']}", self.styles['Title']))
+        filename = escape(details.get('filename', 'unknown'))
+        elements.append(Paragraph(f"Analysis Report: {filename}", self.styles['Title']))
         elements.append(Spacer(1, 12))
 
         # Summary Table
         summary_data = [
             ["Attribute", "Value"],
-            ["Verdict", details['verdict'] or "Unknown"],
-            ["Threat Score", str(details['threat_score'] or 0)],
-            ["SHA256", details['sha256']],
-            ["MD5", details['md5']],
-            ["Size", f"{details['size_bytes']} bytes"],
-            ["Started At", details['started_at']],
-            ["Finished At", details['finished_at']]
+            ["Verdict", escape(details.get('verdict') or "Unknown")],
+            ["Threat Score", str(details.get('threat_score') or 0)],
+            ["SHA256", escape(details.get('sha256') or "")],
+            ["MD5", escape(details.get('md5') or "")],
+            ["Size", f"{details.get('size_bytes', 0)} bytes"],
+            ["Started At", escape(str(details.get('started_at') or ""))],
+            ["Finished At", escape(str(details.get('finished_at') or ""))]
         ]
         t = Table(summary_data, colWidths=[100, 400])
         t.setStyle(TableStyle([
@@ -60,25 +62,26 @@ class PDFGenerator:
         if yara_matches:
             for match in yara_matches:
                 if isinstance(match, dict):
-                    rule = match.get('rule', 'unknown')
-                    source = match.get('source', 'unknown').upper()
+                    rule = escape(match.get('rule', 'unknown'))
+                    source = escape(match.get('source', 'unknown').upper())
                     elements.append(Paragraph(f"Rule: <b>{rule}</b> ({source})", self.styles['Normal']))
 
                     # Meta & Tags
                     tags = match.get('tags', [])
                     if tags:
-                        elements.append(Paragraph(f"<i>Tags: {', '.join(tags)}</i>", self.styles['Normal']))
+                        escaped_tags = [escape(str(t)) for t in tags]
+                        elements.append(Paragraph(f"<i>Tags: {', '.join(escaped_tags)}</i>", self.styles['Normal']))
 
                     meta = match.get('meta', {})
                     if meta:
                         for k, v in meta.items():
-                            elements.append(Paragraph(f"  - {k}: {v}", self.styles['Normal']))
+                            elements.append(Paragraph(f"  - {escape(str(k))}: {escape(str(v))}", self.styles['Normal']))
 
                     # Process context
                     if source == 'MEMORY':
-                        pid = match.get('pid', 'N/A')
-                        proc = match.get('process_name', 'unknown')
-                        path = match.get('exe_path', 'unknown')
+                        pid = escape(str(match.get('pid', 'N/A')))
+                        proc = escape(match.get('process_name', 'unknown'))
+                        path = escape(match.get('exe_path', 'unknown'))
                         elements.append(Paragraph(f"  Context: PID {pid} ({proc}) - {path}", self.styles['Normal']))
 
                     # Strings
@@ -86,11 +89,13 @@ class PDFGenerator:
                     if strings:
                         elements.append(Paragraph("  Matched Strings:", self.styles['Normal']))
                         for s in strings[:10]: # Limit to top 10 strings
-                            elements.append(Paragraph(f"    {s['offset']}:{s['identifier']}: {s['data']}", self.styles['Normal']))
+                            s_id = escape(str(s.get('identifier', '')))
+                            s_data = escape(str(s.get('data', '')))
+                            elements.append(Paragraph(f"    {s.get('offset')}:{s_id}: {s_data}", self.styles['Normal']))
                         if len(strings) > 10:
                             elements.append(Paragraph(f"    ... and {len(strings)-10} more", self.styles['Normal']))
                 else:
-                    elements.append(Paragraph(f"• {match}", self.styles['Normal']))
+                    elements.append(Paragraph(f"• {escape(str(match))}", self.styles['Normal']))
                 elements.append(Spacer(1, 6))
         else:
             elements.append(Paragraph("No YARA matches found.", self.styles['Normal']))
@@ -113,7 +118,7 @@ class PDFGenerator:
             else:
                 desc = str(det)
 
-            event_data.append([str(ts), ev_type, Paragraph(desc, self.styles['Normal'])])
+            event_data.append([str(ts), ev_type, Paragraph(escape(desc), self.styles['Normal'])])
 
         et = Table(event_data, colWidths=[60, 60, 380])
         et.setStyle(TableStyle([
@@ -124,4 +129,9 @@ class PDFGenerator:
         ]))
         elements.append(et)
 
-        doc.build(elements)
+        try:
+            doc.build(elements)
+            self.logger.info(f"Successfully generated PDF report at {self.output_path}")
+        except Exception as e:
+            self.logger.error(f"Error building PDF doc: {e}")
+            raise

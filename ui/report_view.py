@@ -103,7 +103,18 @@ class ReportView(Gtk.Box):
             path = dialog.get_file().get_path()
             if not path.endswith(".pdf"): path += ".pdf"
 
-            from core.report_generator import PDFGenerator
-            gen = PDFGenerator(path)
-            gen.generate(self.current_details, self.current_events)
+            import threading
+            from gi.repository import GLib
+
+            def run_export():
+                try:
+                    from core.report_generator import PDFGenerator
+                    gen = PDFGenerator(path)
+                    gen.generate(self.current_details, self.current_events)
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to export PDF: {e}")
+
+            threading.Thread(target=run_export, daemon=True).start()
         dialog.destroy()
