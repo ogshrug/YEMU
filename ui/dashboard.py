@@ -67,6 +67,8 @@ class Dashboard(Gtk.Box):
 
         self._populate_events(events or [])
 
+    MAX_VISIBLE_EVENTS = 500
+
     def _populate_events(self, events):
         import json
         from gi.repository import Adw
@@ -78,8 +80,11 @@ class Dashboard(Gtk.Box):
                 if not row: break
                 lb.remove(row)
 
+        if len(events) > self.MAX_VISIBLE_EVENTS:
+            events = events[:self.MAX_VISIBLE_EVENTS]
+
         # Build Process Hierarchy
-        processes = {} # pid -> {details, children: []}
+        processes = {}
         root_pids = []
 
         for ev in events:

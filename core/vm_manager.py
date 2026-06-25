@@ -390,10 +390,9 @@ class VMManager:
 
     async def inject_file_via_agent(self, vm_name, local_path, guest_path):
         self.logger.info(f"Injecting {local_path} to {vm_name}:{guest_path} via guest agent")
-        try:
-            with open(local_path, "rb") as f:
-                content = f.read()
+        chunk_size = 48 * 1024
 
+        try:
             # 1. Open file
             open_args = {
                 "execute": "guest-file-open",
@@ -408,23 +407,25 @@ class VMManager:
 
             handle = json.loads(stdout.decode())['return']
 
-            # 2. Write content in chunks (agent has limits, usually 1MB but let's be safe with 48KB)
-            chunk_size = 48 * 1024
-            for i in range(0, len(content), chunk_size):
-                chunk = content[i:i + chunk_size]
-                write_args = {
-                    "execute": "guest-file-write",
-                    "arguments": {
-                        "handle": handle,
-                        "buf-b64": base64.b64encode(chunk).decode()
+            # 2. Write content in chunks without loading whole file into memory
+            with open(local_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    write_args = {
+                        "execute": "guest-file-write",
+                        "arguments": {
+                            "handle": handle,
+                            "buf-b64": base64.b64encode(chunk).decode()
+                        }
                     }
-                }
-                cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(write_args)]
-                proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                stdout, stderr = await proc.communicate()
-                if proc.returncode != 0:
-                    self.logger.error(f"guest-file-write failed: {stderr.decode()}")
-                    return False
+                    cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(write_args)]
+                    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                    stdout, stderr = await proc.communicate()
+                    if proc.returncode != 0:
+                        self.logger.error(f"guest-file-write failed: {stderr.decode()}")
+                        return False
 
             # 3. Close file
             close_args = {

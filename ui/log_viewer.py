@@ -33,6 +33,8 @@ class LogViewer(Gtk.Box):
 
         self.buffer = self.log_text.get_buffer()
 
+    MAX_LINES = 1000
+
     def append_log(self, message, severity="INFO"):
         if self.pause_btn.get_active():
             return
@@ -40,6 +42,11 @@ class LogViewer(Gtk.Box):
         end_iter = self.buffer.get_end_iter()
         prefix = f"[{severity}] "
         self.buffer.insert(end_iter, f"{prefix}{message}\n")
+
+        line_count = self.buffer.get_line_count()
+        if line_count > self.MAX_LINES:
+            start_iter = self.buffer.get_iter_at_line(line_count - self.MAX_LINES)
+            self.buffer.delete(self.buffer.get_start_iter(), start_iter)
 
         # Auto-scroll
         adj = self.log_text.get_vadjustment()

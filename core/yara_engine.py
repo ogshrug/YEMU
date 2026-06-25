@@ -15,6 +15,7 @@ class YaraEngine:
         self.rules_dir = Path(rules_dir)
         self.rules = None
         self.logger = logging.getLogger(__name__)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self.load_rules()
 
     def load_rules(self):
@@ -133,8 +134,7 @@ class YaraEngine:
 
     async def scan_file_async(self, filepath):
         loop = asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            return await loop.run_in_executor(pool, self.scan_file, filepath)
+        return await loop.run_in_executor(self._thread_pool, self.scan_file, filepath)
 
     def scan_memory(self, dump_path):
         results = []

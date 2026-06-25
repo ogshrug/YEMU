@@ -24,9 +24,12 @@ class MainWindow(Adw.ApplicationWindow):
         def load_details():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            details = loop.run_until_complete(self.db.get_analysis_details(analysis_id))
-            events = loop.run_until_complete(self.db.get_analysis_events(analysis_id))
-            GLib.idle_add(self._display_analysis_details, details, events)
+            try:
+                details = loop.run_until_complete(self.db.get_analysis_details(analysis_id))
+                events = loop.run_until_complete(self.db.get_analysis_events(analysis_id))
+                GLib.idle_add(self._display_analysis_details, details, events)
+            finally:
+                loop.close()
 
         threading.Thread(target=load_details, daemon=True).start()
 
@@ -87,13 +90,16 @@ class MainWindow(Adw.ApplicationWindow):
         def run_async():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.orchestrator.run_analysis(
-                filename,
-                guest_os=vm_name,
-                snapshot_name=snap_name,
-                run_gui=run_gui,
-                run_pcap=run_pcap
-            ))
+            try:
+                loop.run_until_complete(self.orchestrator.run_analysis(
+                    filename,
+                    guest_os=vm_name,
+                    snapshot_name=snap_name,
+                    run_gui=run_gui,
+                    run_pcap=run_pcap
+                ))
+            finally:
+                loop.close()
             GLib.idle_add(self._on_analysis_complete)
 
         threading.Thread(target=run_async, daemon=True).start()
@@ -113,7 +119,10 @@ class MainWindow(Adw.ApplicationWindow):
                 return
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            analyses = loop.run_until_complete(self.db.get_recent_analyses())
+            try:
+                analyses = loop.run_until_complete(self.db.get_recent_analyses())
+            finally:
+                loop.close()
             GLib.idle_add(self._populate_analysis_list, analyses)
 
         threading.Thread(target=fetch_analyses, daemon=True).start()
@@ -361,7 +370,10 @@ class MainWindow(Adw.ApplicationWindow):
         def init_db():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.db.connect())
+            try:
+                loop.run_until_complete(self.db.connect())
+            finally:
+                loop.close()
             GLib.idle_add(self._update_recent_analyses)
 
         threading.Thread(target=init_db, daemon=True).start()

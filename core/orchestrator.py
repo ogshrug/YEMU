@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 from datetime import datetime
@@ -19,18 +20,10 @@ class Orchestrator:
         self.logger.info(f"Starting analysis for {sample_path} on {guest_os} (Snapshot: {snapshot_name}, GUI: {run_gui}, PCAP: {run_pcap})")
         self._notify_ui(f"Starting analysis on {guest_os} (Snapshot: {snapshot_name})...")
 
-        # Defensive initializations
-        events = []
-        yara_matches = []
-        network_events = []
         strace_output = ""
         verdict = None
-        report = {}
-
-        # Internal tracking variables
         static_matches = []
         memory_matches = []
-        all_events = []
         all_yara_matches = []
         score = 0
         analysis_id = None
@@ -47,13 +40,18 @@ class Orchestrator:
 
         # 1. Prepare Sample metadata
         try:
-            import hashlib
+            size_bytes = 0
+            sha256_hash = hashlib.sha256()
+            md5_hash = hashlib.md5()
             with open(sample_path, "rb") as f:
-                data = f.read()
-                sha256 = hashlib.sha256(data).hexdigest()
-                md5 = hashlib.md5(data).hexdigest()
+                for chunk in iter(lambda: f.read(65536), b""):
+                    sha256_hash.update(chunk)
+                    md5_hash.update(chunk)
+                    size_bytes += len(chunk)
+            sha256 = sha256_hash.hexdigest()
+            md5 = md5_hash.hexdigest()
 
-            sample_id = await self.db.add_sample(sha256, md5, os.path.basename(sample_path), "unknown", len(data))
+            sample_id = await self.db.add_sample(sha256, md5, os.path.basename(sample_path), "unknown", size_bytes)
             if sample_id:
                 analysis_id = await self.db.create_analysis(sample_id, datetime.now())
                 if not analysis_id:
@@ -223,22 +221,17 @@ class Orchestrator:
 
                     from core.behaviour_monitor import BehaviourMonitor
                     monitor = BehaviourMonitor()
-                    all_events = []
 
                     for log_file in log_files:
                         if not log_file.startswith("/tmp/strace.log"): continue
                         pid = log_file.split('.')[-1]
                         content = await self.vm_manager.run_command(guest_os, f"cat {log_file}")
                         events_chunk = monitor.parse_strace(content.splitlines(), pid=pid)
-                        all_events.extend(events_chunk)
-
-                    # Sort events by timestamp if available
-                    all_events.sort(key=lambda x: x.get('timestamp', 0))
-
-                    for ev in all_events:
-                        if analysis_id:
-                            await self.db.add_event(analysis_id, ev['type'], ev.get('timestamp', 0), "WARN", ev)
-                        self._notify_ui(f"Behavior: {ev.get('syscall', 'unknown')}", "WARN")
+                        events_chunk.sort(key=lambda x: x.get('timestamp', 0))
+                        for ev in events_chunk:
+                            if analysis_id:
+                                await self.db.add_event(analysis_id, ev['type'], ev.get('timestamp', 0), "WARN", ev)
+                            self._notify_ui(f"Behavior: {ev.get('syscall', 'unknown')}", "WARN")
                 except Exception as e:
                     self._notify_ui(f"Strace collection failed: {e}", "WARN")
                     all_events = []
@@ -272,7 +265,29 @@ class Orchestrator:
             except Exception as e:
                 self._notify_ui(f"Threat scoring failed: {e}", "WARN")
 
-            # 7. Cleanup
+            # 7. Save Report
+            try:
+                if analysis_id:
+                    self._notify_ui("Saving report...")
+                    report_data = {
+                        "filename": os.path.basename(sample_path),
+                        "sha256": sha256,
+                        "md5": md5,
+                        "score": score,
+                        "verdict": verdict,
+                        "yara_matches": all_yara_matches,
+                    }
+                    await self.db.update_analysis(analysis_id, report_json=report_data)
+
+                    from storage.report_store import ReportStore
+                    store = ReportStore()
+                    store.save_json(analysis_id, report_data)
+                    store.generate_pdf(analysis_id, report_data)
+                    self._notify_ui("Report saved successfully.", "INFO")
+            except Exception as e:
+                self._notify_ui(f"Failed to save report: {e}", "WARN")
+
+            # 8. Cleanup
             self._notify_ui("Cleaning up VM...")
             await self.vm_manager.stop_vm(guest_os)
 
