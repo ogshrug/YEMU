@@ -41,9 +41,6 @@ class Orchestrator:
             self.yara_engine = YaraEngine()
             self._notify_ui("Running YARA static analysis...")
             static_matches = await self.yara_engine.scan_file_async(sample_path)
-            for match in static_matches:
-                match['source'] = 'static'
-                self._notify_ui(f"YARA Static Match: {match['rule']}", "WARN")
         except Exception as e:
             self._notify_ui(f"Static analysis failed: {e}", "WARN")
             static_matches = []
@@ -62,6 +59,12 @@ class Orchestrator:
                 if not analysis_id:
                     self._notify_ui("Failed to create analysis record in database.", "CRITICAL")
                     return None
+
+                # Add static matches to database
+                for match in static_matches:
+                    match['source'] = 'static'
+                    self._notify_ui(f"YARA Static Match: {match['rule']}", "WARN")
+                    await self.db.add_event(analysis_id, "yara", 0, "WARN", match)
             else:
                 self._notify_ui("Failed to create sample record in database.", "CRITICAL")
                 return None
@@ -81,19 +84,34 @@ class Orchestrator:
                 self._notify_ui(f"Reverting VM to snapshot {snapshot_name}...")
                 await self.vm_manager.revert_to_snapshot(guest_os, snapshot_name=snapshot_name)
 
-                self._notify_ui("Injecting sample into VM...")
-                # We explicitly tell VMManager to name it 'malware_sample' in /
-                guest_sample_path = "/malware_sample"
-                if not await self.vm_manager.inject_file(guest_os, sample_path, guest_sample_path):
-                    self._notify_ui("Failed to inject sample. Continuing anyway...", "WARN")
-
-                self._notify_ui("Starting VM and waiting for guest agent...")
+                self._notify_ui("Starting VM...")
                 started = await self.vm_manager.start_vm(guest_os)
                 if not started:
                     self._notify_ui("Failed to start VM.", "CRITICAL")
                     raise RuntimeError("Failed to start VM.")
 
+                self._notify_ui("Waiting for guest agent...")
                 await self.vm_manager.wait_for_guest_agent(guest_os)
+
+                self._notify_ui("Injecting sample into VM...")
+                # We explicitly tell VMManager to name it 'malware_sample' in /
+                guest_sample_path = "/malware_sample"
+
+                # Try agent injection first as it's faster and works on running VM
+                if hasattr(self.vm_manager, 'inject_file_via_agent'):
+                    success = await self.vm_manager.inject_file_via_agent(guest_os, sample_path, guest_sample_path)
+                else:
+                    success = await self.vm_manager.inject_file(guest_os, sample_path, guest_sample_path)
+
+                if not success:
+                    # Fallback to offline injection if agent fails (might need to stop VM)
+                    self._notify_ui("Agent injection failed, trying offline injection...", "WARN")
+                    await self.vm_manager.stop_vm(guest_os)
+                    if await self.vm_manager.inject_file(guest_os, sample_path, guest_sample_path):
+                        await self.vm_manager.start_vm(guest_os)
+                        await self.vm_manager.wait_for_guest_agent(guest_os)
+                    else:
+                        self._notify_ui("Failed to inject sample. Continuing anyway...", "WARN")
             except Exception as e:
                 self._notify_ui(f"VM Preparation error: {e}", "CRITICAL")
 

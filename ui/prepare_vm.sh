@@ -32,15 +32,45 @@ trap cleanup EXIT
 
 check_deps() {
     local missing=()
-    for cmd in zenity wget curl qemu-img virsh genisoimage; do
+    local pkgs=()
+
+    # Map commands to packages
+    declare -A cmd_to_pkg=(
+        ["zenity"]="zenity"
+        ["wget"]="wget"
+        ["curl"]="curl"
+        ["qemu-img"]="qemu-utils"
+        ["virsh"]="libvirt-clients"
+        ["genisoimage"]="genisoimage"
+        ["virt-viewer"]="virt-viewer"
+        ["yara"]="yara"
+    )
+
+    for cmd in "${!cmd_to_pkg[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
             missing+=("$cmd")
+            pkgs+=("${cmd_to_pkg[$cmd]}")
         fi
     done
+
     if [[ ${#missing[@]} -gt 0 ]]; then
-        error "Missing dependencies: ${missing[*]}"
-        error "Install with: sudo apt install ${missing[*]}"
-        return 1
+        warn "Missing dependencies: ${missing[*]}"
+        if zenity --question --title="Missing Dependencies" \
+           --text="The following packages are missing: ${pkgs[*]}\n\nWould you like to install them now? (Requires sudo)" \
+           --width=400 2>/dev/null; then
+
+            log "Installing missing packages: ${pkgs[*]}..."
+            # Use zenity to run sudo command and show progress
+            if pkexec apt-get update && pkexec apt-get install -y "${pkgs[@]}"; then
+                log "Dependencies installed successfully."
+            else
+                error "Failed to install dependencies."
+                return 1
+            fi
+        else
+            error "Dependencies not installed. Please install manually: sudo apt install ${pkgs[*]}"
+            return 1
+        fi
     fi
 }
 

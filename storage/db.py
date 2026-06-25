@@ -151,7 +151,8 @@ class Database:
                 ORDER BY a.started_at DESC
                 LIMIT ?
             """, (limit,)) as cursor:
-                return await cursor.fetchall()
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
         except Exception as e:
             self.logger.error(f"Failed to get recent analyses: {e}")
             return []
@@ -165,7 +166,8 @@ class Database:
                 JOIN samples s ON a.sample_id = s.id
                 WHERE a.id = ?
             """, (analysis_id,)) as cursor:
-                return await cursor.fetchone()
+                row = await cursor.fetchone()
+                return dict(row) if row else None
         except Exception as e:
             self.logger.error(f"Failed to get analysis details: {e}")
             return None
@@ -176,7 +178,8 @@ class Database:
             async with self.conn.execute("""
                 SELECT * FROM events WHERE analysis_id = ? ORDER BY timestamp ASC
             """, (analysis_id,)) as cursor:
-                return await cursor.fetchall()
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
         except Exception as e:
             self.logger.error(f"Failed to get analysis events: {e}")
             return []
