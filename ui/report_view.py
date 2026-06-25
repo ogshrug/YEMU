@@ -111,10 +111,18 @@ class ReportView(Gtk.Box):
                     from core.report_generator import PDFGenerator
                     gen = PDFGenerator(path)
                     gen.generate(self.current_details, self.current_events)
+                    GLib.idle_add(self._show_export_result, f"PDF saved to {path}", False)
                 except Exception as e:
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Failed to export PDF: {e}")
+                    GLib.idle_add(self._show_export_result, f"Failed to export PDF: {e}", True)
 
             threading.Thread(target=run_export, daemon=True).start()
         dialog.destroy()
+
+    def _show_export_result(self, message, is_error):
+        root = self.get_root()
+        if not root:
+            return
+        toast = Adw.Toast(title=message)
+        toast.set_timeout(5)
+        if hasattr(root, 'add_toast'):
+            root.add_toast(toast)

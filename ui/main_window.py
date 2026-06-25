@@ -16,34 +16,66 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_analysis_selected(self, listbox, row):
         if not row:
             return
-        analysis_id = row.analysis_id
+        analysis_id = getattr(row, 'analysis_id', None)
+        if analysis_id is None:
+            return
+
+        if getattr(self, '_loading_analysis_id', None) == analysis_id:
+            return
+        self._loading_analysis_id = analysis_id
 
         import asyncio
         import threading
+        import json
+
+        GLib.idle_add(self._append_log, f"Loading analysis #{analysis_id}...", "INFO")
 
         def load_details():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 details = loop.run_until_complete(self.db.get_analysis_details(analysis_id))
-                events = loop.run_until_complete(self.db.get_analysis_events(analysis_id))
-                GLib.idle_add(self._display_analysis_details, details, events)
+                events_raw = loop.run_until_complete(self.db.get_analysis_events(analysis_id))
+            except Exception:
+                details = None
+                events_raw = None
             finally:
-                loop.close()
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+
+            if not details:
+                GLib.idle_add(self._append_log, f"Analysis #{analysis_id} not found.", "WARN")
+                GLib.idle_add(lambda: setattr(self, '_loading_analysis_id', None))
+                return
+
+            try:
+                yara_matches = json.loads(details['yara_matches']) if details['yara_matches'] else []
+            except (json.JSONDecodeError, TypeError):
+                yara_matches = []
+
+            if events_raw:
+                for ev in events_raw[:100]:
+                    try:
+                        ev['details'] = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
+                    except (json.JSONDecodeError, TypeError):
+                        ev['details'] = {}
+
+            GLib.idle_add(self._display_analysis_details, details, yara_matches, events_raw or [])
 
         threading.Thread(target=load_details, daemon=True).start()
 
-    def _display_analysis_details(self, details, events):
+    def _display_analysis_details(self, details, yara_matches, events):
         if not details:
+            self._loading_analysis_id = None
             return
 
-        import json
-        yara_matches = json.loads(details['yara_matches']) if details['yara_matches'] else []
-
+        self._loading_analysis_id = None
         self.dashboard.update_data(
             details['threat_score'] or 0,
             len(yara_matches),
-            0, # TODO: IOC count
+            0,
             events=events
         )
         self.report_view.update_report(details, events)
@@ -83,6 +115,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._analysis_running = True
         self.upload_btn.set_sensitive(False)
+        self.progress_bar.set_fraction(0)
+        self.progress_bar.set_visible(True)
         self._append_log(f"Submitting {filename} for analysis on {vm_name} ({snap_name})...", "INFO")
 
         import threading
@@ -98,8 +132,13 @@ class MainWindow(Adw.ApplicationWindow):
                     run_gui=run_gui,
                     run_pcap=run_pcap
                 ))
+            except Exception:
+                pass
             finally:
-                loop.close()
+                try:
+                    loop.close()
+                except Exception:
+                    pass
             GLib.idle_add(self._on_analysis_complete)
 
         threading.Thread(target=run_async, daemon=True).start()
@@ -107,6 +146,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_analysis_complete(self):
         self._analysis_running = False
         self._validate_submit()
+        self.progress_bar.set_visible(False)
+        self.progress_bar.set_fraction(0)
         self._append_log("Analysis complete. Check the dashboard for results.", "INFO")
         self._update_recent_analyses()
 
@@ -115,14 +156,20 @@ class MainWindow(Adw.ApplicationWindow):
         import threading
 
         def fetch_analyses():
-            if not hasattr(self.db, 'conn'):
+            if not getattr(self.db, 'conn', None):
                 return
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 analyses = loop.run_until_complete(self.db.get_recent_analyses())
+                analyses = analyses or []
+            except Exception:
+                analyses = []
             finally:
-                loop.close()
+                try:
+                    loop.close()
+                except Exception:
+                    pass
             GLib.idle_add(self._populate_analysis_list, analyses)
 
         threading.Thread(target=fetch_analyses, daemon=True).start()
@@ -166,12 +213,12 @@ class MainWindow(Adw.ApplicationWindow):
         threading.Thread(target=run_update, daemon=True).start()
 
     def _on_vm_list_error(self, e):
-            self._append_log(f"Error listing VMs: {e}. Falling back to Mock Mode.", "CRITICAL")
-            if not isinstance(self.orchestrator.vm_manager, MockVMManager):
-                from core.vm_manager import MockVMManager
-                self.orchestrator.vm_manager = MockVMManager(ui_callback=self._append_log)
-                vms = [""] + sorted(self.orchestrator.vm_manager.list_vms())
-                self.vm_dropdown.set_model(Gtk.StringList.new(vms))
+        self._append_log(f"Error listing VMs: {e}. Falling back to Mock Mode.", "CRITICAL")
+        if not isinstance(self.orchestrator.vm_manager, MockVMManager):
+            from core.vm_manager import MockVMManager
+            self.orchestrator.vm_manager = MockVMManager(ui_callback=self._append_log)
+            vms = [""] + sorted(self.orchestrator.vm_manager.list_vms())
+            self.vm_dropdown.set_model(Gtk.StringList.new(vms))
 
     def _on_vm_selected(self, dropdown, pspec):
         selected_item = dropdown.get_selected_item()
@@ -185,7 +232,7 @@ class MainWindow(Adw.ApplicationWindow):
                         snapshots = [""] + sorted(snapshots)
                         GLib.idle_add(lambda: self.snapshot_dropdown.set_model(Gtk.StringList.new(snapshots)))
                     except Exception as e:
-                        self._append_log(f"Error listing snapshots: {e}", "CRITICAL")
+                        GLib.idle_add(self._append_log, f"Error listing snapshots: {e}", "CRITICAL")
                         GLib.idle_add(lambda: self.snapshot_dropdown.set_model(Gtk.StringList.new([""])))
                 threading.Thread(target=run_snapshots, daemon=True).start()
             else:
@@ -194,6 +241,28 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_snapshot_selected(self, dropdown, pspec):
         self._validate_submit()
+
+    def _update_progress_from_message(self, msg):
+        steps = [
+            "Starting analysis",
+            "Running YARA static analysis",
+            "Verifying VM environment",
+            "Reverting VM to snapshot",
+            "Starting VM",
+            "Waiting for guest agent",
+            "Injecting sample",
+            "Running in-guest YARA memory scan",
+            "Collecting behavioral logs",
+            "Computing threat score",
+            "Saving report",
+            "Cleaning up VM",
+        ]
+        for i, step in enumerate(steps):
+            if step.lower() in msg.lower():
+                fraction = (i + 1) / len(steps)
+                self.progress_bar.set_fraction(fraction)
+                self.progress_bar.set_visible(True)
+                break
 
     def _validate_submit(self):
         if hasattr(self, "_analysis_running") and self._analysis_running:
@@ -256,7 +325,7 @@ class MainWindow(Adw.ApplicationWindow):
         upload_box.set_margin_start(10)
         upload_box.set_margin_end(10)
         upload_box.set_margin_top(10)
-        upload_box.set_margin_bottom(10)
+        upload_box.set_margin_bottom(5)
         upload_box.set_halign(Gtk.Align.CENTER)
 
         self.upload_btn = Gtk.Button(label="Submit File for Analysis")
@@ -285,6 +354,14 @@ class MainWindow(Adw.ApplicationWindow):
         upload_box.append(self.prepare_btn)
 
         self.main_box.append(upload_box)
+
+        # Progress bar
+        self.progress_bar = Gtk.ProgressBar()
+        self.progress_bar.set_margin_start(10)
+        self.progress_bar.set_margin_end(10)
+        self.progress_bar.set_margin_bottom(10)
+        self.progress_bar.set_visible(False)
+        self.main_box.append(self.progress_bar)
 
         # VM/Snapshot Selection
         selection_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -354,6 +431,11 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.db = Database()
 
+        def ui_callback(msg, severity="INFO"):
+            self._append_log(msg, severity)
+            if severity in ("INFO", "WARN", "CRITICAL"):
+                GLib.idle_add(self._update_progress_from_message, msg)
+
         # Check permissions
         if not self._check_group_permissions():
             vm_mgr = MockVMManager(ui_callback=self._append_log)
@@ -361,7 +443,7 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             vm_mgr = VMManager(ui_callback=self._append_log)
 
-        self.orchestrator = Orchestrator(self.db, vm_manager=vm_mgr, ui_callback=self._append_log)
+        self.orchestrator = Orchestrator(self.db, vm_manager=vm_mgr, ui_callback=ui_callback)
 
         # Initial populations and validation
         self._update_vm_list()
@@ -372,8 +454,13 @@ class MainWindow(Adw.ApplicationWindow):
             asyncio.set_event_loop(loop)
             try:
                 loop.run_until_complete(self.db.connect())
+            except Exception:
+                pass
             finally:
-                loop.close()
+                try:
+                    loop.close()
+                except Exception:
+                    pass
             GLib.idle_add(self._update_recent_analyses)
 
         threading.Thread(target=init_db, daemon=True).start()

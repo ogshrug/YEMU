@@ -67,42 +67,42 @@ class Dashboard(Gtk.Box):
 
         self._populate_events(events or [])
 
-    MAX_VISIBLE_EVENTS = 500
+    MAX_VISIBLE_EVENTS = 100
 
     def _populate_events(self, events):
-        import json
         from gi.repository import Adw
 
-        # Clear lists
         for lb in [self.proc_tree, self.net_view, self.file_view, self.yara_view]:
             while True:
                 row = lb.get_first_child()
                 if not row: break
                 lb.remove(row)
 
-        if len(events) > self.MAX_VISIBLE_EVENTS:
-            events = events[:self.MAX_VISIBLE_EVENTS]
+        if not events:
+            return
 
-        # Build Process Hierarchy
+        events = events[:self.MAX_VISIBLE_EVENTS]
+
         processes = {}
         root_pids = []
 
         for ev in events:
-            details = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
+            details = ev['details']
+            if not isinstance(details, dict):
+                continue
             ev_type = ev['event_type']
 
             if ev_type == 'process':
-                pid = str(details.get('pid'))
-                ppid = str(details.get('ppid'))
+                pid = str(details.get('pid', ''))
+                ppid = str(details.get('ppid', ''))
 
                 if pid not in processes:
                     processes[pid] = {'details': details, 'children': []}
                 else:
-                    # Update details if we have more info (like from execve)
                     if details.get('action') == 'execute' or processes[pid]['details'].get('process_name') == 'unknown':
                         processes[pid]['details'].update(details)
 
-                if ppid != "unknown" and ppid != "None" and ppid != "0":
+                if ppid not in ("unknown", "None", "0", ""):
                     if ppid not in processes:
                         processes[ppid] = {'details': {'process_name': 'unknown', 'pid': ppid}, 'children': []}
                     if pid not in processes[ppid]['children']:
@@ -130,7 +130,9 @@ class Dashboard(Gtk.Box):
             add_proc_row(root_pid)
 
         for ev in events:
-            details = json.loads(ev['details']) if isinstance(ev['details'], str) else ev['details']
+            details = ev['details']
+            if not isinstance(details, dict):
+                continue
             ev_type = ev['event_type']
 
             if ev_type == 'yara':
@@ -140,13 +142,11 @@ class Dashboard(Gtk.Box):
 
                 row.set_title(f"[{source}] Rule: {rule}")
 
-                # Info in subtitle or expanded
                 pid = details.get('pid', 'N/A')
                 proc = details.get('process_name', 'unknown')
                 path = details.get('path', details.get('exe_path', '[unreadable]'))
                 row.set_subtitle(f"PID: {pid} | Process: {proc}")
 
-                # Add tags and meta
                 tags = details.get('tags', [])
                 meta = details.get('meta', {})
                 desc = meta.get('description', 'N/A')
@@ -161,12 +161,10 @@ class Dashboard(Gtk.Box):
                 info_box.append(Gtk.Label(label=f"Tags: {', '.join(tags) if tags else 'none'}", xalign=0))
                 info_box.append(Gtk.Label(label=f"Description: {desc}", xalign=0))
 
-                # Add strings
                 strings = details.get('strings', [])
                 if strings:
                     info_box.append(Gtk.Label(label="Matched Strings:", xalign=0))
-                    for s in strings:
-                        # Handle both dict and object formats
+                    for s in strings[:20]:
                         if isinstance(s, dict):
                             offset = s.get('offset', '0x0')
                             identifier = s.get('identifier', '$?')
@@ -188,7 +186,7 @@ class Dashboard(Gtk.Box):
 
             row = Adw.ActionRow()
             if ev_type == 'process':
-                continue # Already handled by process tree
+                continue
             elif ev_type == 'network':
                 row.set_title(f"{details.get('dst_ip', 'N/A')}:{details.get('dst_port', 'N/A')}")
                 row.set_subtitle(details.get('syscall', 'connect'))
