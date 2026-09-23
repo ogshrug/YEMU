@@ -169,7 +169,8 @@ class RulesPage(QWidget):
         ]
         synced_root = paths.synced_rules_dir()
         synced = sorted(p for p in synced_root.rglob("*") if p.suffix in (".yar", ".yara")
-                        and self._custom_dir() not in p.parents)
+                        and self._custom_dir() not in p.parents
+                        and not any(part.startswith(".") for part in p.relative_to(synced_root).parts))
         groups.append((f"Synced ({len(synced)})", synced, False, synced_root))
         for title, files, ro, base in groups:
             top = QTreeWidgetItem([title])
@@ -301,14 +302,22 @@ class RulesPage(QWidget):
         self.sync_btn.setEnabled(False)
         self.sync_bar.show()
         self.sync_bar.setValue(0)
-        sync = YaraRuleSync(repo_url=self.repo.text().strip(), branch=self.branch.text().strip() or "master")
+        try:
+            sync = YaraRuleSync(repo_url=self.repo.text().strip(), branch=self.branch.text().strip() or "master",
+                                ref=self.ctx.config["rules"]["ref"],
+                                max_download_mb=self.ctx.config["rules"]["max_download_mb"])
+        except Exception as e:
+            self.sync_btn.setEnabled(True)
+            self.sync_bar.hide()
+            QMessageBox.warning(self, "YEMU", str(e))
+            return
 
         def done(manifest):
             self.sync_btn.setEnabled(True)
             self.sync_bar.hide()
-            count = manifest.get("rule_count", manifest.get("count", "")) if isinstance(manifest, dict) else ""
             self.status.setStyleSheet("")
-            self.status.setText(f"Sync complete {count}".strip())
+            self.status.setText(f"Synced {manifest.get('file_count', 0)} rules at {str(manifest.get('commit', ''))[:12]}"
+                                f" ({len(manifest.get('skipped_files', []))} skipped)")
             self.refresh()
 
         def failed(e):

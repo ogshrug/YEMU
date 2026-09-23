@@ -81,10 +81,13 @@ def cmd_analyze(args, cfg):
         print(json.dumps(details, indent=2, default=_json_default))
     else:
         print(f"\nAnalysis #{analysis_id}: {details['filename']}")
+        print(f"  status:  {details.get('status')}" + (f"  ({details['error']})" if details.get("error") else ""))
         print(f"  verdict: {details['verdict'] or 'unknown'}")
         print(f"  score:   {details['threat_score'] or 0}/100")
         print(f"  report:  {paths.reports_dir() / f'report_{analysis_id}.json'}")
-    # Non-zero exit for malicious samples makes the CLI usable in pipelines
+    # exit codes for pipelines: 3 = malicious, 4 = analysis failed/timed out (verdict incomplete)
+    if details.get("status") in ("failed", "timeout"):
+        return 4
     return 3 if details.get("verdict") == "malicious" else 0
 
 
@@ -96,10 +99,10 @@ def cmd_reports(args, cfg):
     if not rows:
         print("No analyses yet.")
         return 0
-    print(f"{'ID':>4}  {'VERDICT':<11} {'SCORE':>5}  {'STARTED':<26} FILE")
+    print(f"{'ID':>4}  {'VERDICT':<11} {'SCORE':>5}  {'STATUS':<11} {'STARTED':<26} FILE")
     for r in rows:
         print(f"{r['id']:>4}  {(r['verdict'] or 'unknown'):<11} {(r['threat_score'] or 0):>5}  "
-              f"{str(r['started_at'] or ''):<26} {r['filename']}")
+              f"{(r.get('status') or '-'):<11} {str(r['started_at'] or ''):<26} {r['filename']}")
     return 0
 
 
@@ -113,7 +116,7 @@ def cmd_report(args, cfg):
     if not details:
         print(f"Analysis #{args.id} not found.", file=sys.stderr)
         return 1
-    for key in ("yara_matches", "report_json"):
+    for key in ("yara_matches", "report_json", "scoring"):
         if isinstance(details.get(key), str):
             try:
                 details[key] = json.loads(details[key])
@@ -200,14 +203,20 @@ def cmd_vm_delete(args, cfg):
 
 
 def cmd_sync_rules(args, cfg):
-    from yemu.core.yara_sync import YaraRuleSync
+    from yemu.core.yara_sync import RuleSyncError, YaraRuleSync
 
     def progress(current, total, filename):
         print(f"\r[{current}/{total}] {filename[:60]:<60}", end="", file=sys.stderr, flush=True)
 
-    sync = YaraRuleSync(repo_url=args.repo or cfg["rules"]["repo_url"],
-                        branch=args.branch or cfg["rules"]["branch"])
-    manifest = sync.sync(progress_callback=progress)
+    try:
+        sync = YaraRuleSync(repo_url=args.repo or cfg["rules"]["repo_url"],
+                            branch=args.branch or cfg["rules"]["branch"],
+                            ref=args.ref if args.ref is not None else cfg["rules"]["ref"],
+                            max_download_mb=cfg["rules"]["max_download_mb"])
+        manifest = sync.sync(progress_callback=progress)
+    except (RuleSyncError, OSError) as e:
+        print(f"\nRule sync failed: {e}", file=sys.stderr)
+        return 1
     print(file=sys.stderr)
     print(f"Synced into {paths.synced_rules_dir()}")
     if isinstance(manifest, dict):
@@ -369,6 +378,7 @@ def build_parser():
     p = sub.add_parser("sync-rules", help="download YARA rules from GitHub")
     p.add_argument("--repo")
     p.add_argument("--branch")
+    p.add_argument("--ref", help="pin a commit SHA or tag (overrides [rules].ref)")
     p.set_defaults(func=cmd_sync_rules)
 
     sub.add_parser("paths", help="show where YEMU stores data").set_defaults(func=cmd_paths)
@@ -385,8 +395,9 @@ def build_parser():
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
-                        format="[%(levelname)s] %(name)s: %(message)s")
+    from yemu.logging_setup import setup_logging
+    setup_logging(console_level=logging.DEBUG if args.verbose else logging.WARNING,
+                  file_level=logging.DEBUG if args.verbose else logging.INFO)
     if not getattr(args, "func", None):
         parser.print_help()
         return 0

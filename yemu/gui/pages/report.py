@@ -126,6 +126,10 @@ class ReportPage(QWidget):
         hl.addLayout(info, 1)
         root.addWidget(header)
 
+        self.status_banner = label("", wrap=True)
+        self.status_banner.hide()
+        root.addWidget(self.status_banner)
+
         stats = QHBoxLayout()
         stats.setSpacing(12)
         self.s_yara = StatCard("YARA hits", accent=theme.VERDICT_COLORS["malicious"])
@@ -143,6 +147,13 @@ class ReportPage(QWidget):
         ov = QWidget()
         ovl = QVBoxLayout(ov)
         ovl.setContentsMargins(12, 12, 12, 12)
+        ovl.addWidget(label("Why this verdict", "SectionTitle"))
+        self.findings = QTreeWidget()
+        self.findings.setHeaderLabels(["Finding", "Detail"])
+        self.findings.setRootIsDecorated(False)
+        self.findings.header().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.findings.setMaximumHeight(170)
+        ovl.addWidget(self.findings)
         ovl.addWidget(label("Process tree", "SectionTitle"))
         self.proc_tree = QTreeWidget()
         self.proc_tree.setHeaderLabels(["Process", "PID", "Command line"])
@@ -218,6 +229,16 @@ class ReportPage(QWidget):
         self.s_net.set_value(len(r["iocs"]))
 
         self._fill_process_tree(r["processes"])
+        self._fill_findings(r)
+        if r["status"] in ("failed", "timeout", "interrupted", "running"):
+            color = theme.VERDICT_COLORS["suspicious" if r["status"] in ("interrupted", "running") else "malicious"]
+            self.status_banner.setText(f"<b>Analysis {r['status']}.</b> {r['error'] or ''} "
+                                       "The verdict below may be based on partial results.")
+            self.status_banner.setStyleSheet(f"QLabel {{ color: {color}; border: 1px solid {color}; border-radius: 8px;"
+                                             f" padding: 8px 12px; }}")
+            self.status_banner.show()
+        else:
+            self.status_banner.hide()
         self.errors.setText("\n".join(f"Error: {e}" for e in r["errors"]))
         self._fill_yara(r["yara_matches"])
 
@@ -247,6 +268,22 @@ class ReportPage(QWidget):
             (parent.addChild(items[pid]) if parent and parent is not items[pid] else self.proc_tree.addTopLevelItem(items[pid]))
         self.proc_tree.expandAll()
         self.proc_tree.resizeColumnToContents(0)
+
+    def _fill_findings(self, r):
+        self.findings.clear()
+        colors = {"persistence": theme.VERDICT_COLORS["malicious"], "network": theme.VERDICT_COLORS["malicious"],
+                  "suspicious": theme.VERDICT_COLORS["suspicious"]}
+        rows = [("yara", f"{m.get('rule')} ({m.get('source', '?')})") for m in r["yara_matches"]]
+        rows += [(f["kind"], f["text"]) for f in r["findings"]]
+        if not rows:
+            rows = [("none", "No YARA hits or suspicious behaviour were recorded.")]
+        for kind, text in rows:
+            it = QTreeWidgetItem([kind.capitalize(), text])
+            color = colors.get(kind) or (theme.VERDICT_COLORS["malicious"] if kind == "yara" else None)
+            if color:
+                it.setForeground(0, QColor(color))
+            self.findings.addTopLevelItem(it)
+        self.findings.resizeColumnToContents(0)
 
     def _fill_yara(self, matches):
         self.yara_tree.clear()

@@ -1,5 +1,8 @@
 import logging
 
+# scapy warns about a missing libpcap provider on import; reading capture files doesn't need one
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+
 try:
     from scapy.all import rdpcap, IP, TCP, UDP, DNS
 except ImportError:

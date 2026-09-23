@@ -5,7 +5,8 @@ from PySide6.QtWidgets import QAbstractItemView, QComboBox, QHBoxLayout, QHeader
 from yemu.gui import theme
 from yemu.gui.widgets import EmptyState, StatCard, button, human_time, page_header
 
-COLUMNS = ["ID", "File", "Verdict", "Score", "Started"]
+COLUMNS = ["ID", "File", "Verdict", "Score", "Status", "Started"]
+STATUS_COLORS = {"failed": "#dc2626", "timeout": "#dc2626", "interrupted": "#d97706", "running": "#7b73ff"}
 
 
 class _Filter(QSortFilterProxyModel):
@@ -75,7 +76,7 @@ class HistoryPage(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(34)
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(1, QHeaderView.Stretch)
-        for col, width in ((0, 60), (2, 120), (3, 80), (4, 170)):
+        for col, width in ((0, 60), (2, 120), (3, 70), (4, 110), (5, 170)):
             h.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
         self.table.doubleClicked.connect(self._open)
@@ -115,7 +116,11 @@ class HistoryPage(QWidget):
             f = v_item.font()
             f.setBold(True)
             v_item.setFont(f)
-            self.model.appendRow([id_item, QStandardItem(r.get("filename") or ""), v_item, score,
+            status = r.get("status") or ""
+            s_item = QStandardItem(status)
+            if status in STATUS_COLORS:
+                s_item.setForeground(QColor(STATUS_COLORS[status]))
+            self.model.appendRow([id_item, QStandardItem(r.get("filename") or ""), v_item, score, s_item,
                                   QStandardItem(human_time(r.get("started_at")))])
         self.table.sortByColumn(0, Qt.DescendingOrder)
         self.stat_total.set_value(len(rows or []))

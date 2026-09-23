@@ -72,6 +72,10 @@ def reports_dir():
     return _ensure(data_dir() / "reports")
 
 
+def logs_dir():
+    return _ensure(data_dir() / "logs")
+
+
 def captures_dir():
     return _ensure(data_dir() / "captures")
 
@@ -107,6 +111,7 @@ def summary():
         "database": db_path(),
         "reports": reports_dir(),
         "captures": captures_dir(),
+        "logs": logs_dir(),
         "synced_rules": synced_rules_dir(),
         "builtin_rules": BUILTIN_RULES_FILE,
         "vm_storage": vm_storage_dir(),

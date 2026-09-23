@@ -36,6 +36,10 @@ DEFAULTS = {
     },
     "analysis": {
         "execution_wait": 5,            # seconds the sample runs before logs are collected
+        "timeout": 900,                 # hard limit for a whole analysis; the VM is powered off after it
+        "max_sample_mb": 256,           # refuse larger samples
+        "max_events": 20000,            # behaviour events stored per analysis (the rest are counted, not stored)
+        "max_pcap_mb": 200,             # captures larger than this are not copied back to the host
     },
     "scoring": {
         "yara_match": 40,
@@ -51,6 +55,8 @@ DEFAULTS = {
     "rules": {
         "repo_url": "https://github.com/Yara-Rules/rules",
         "branch": "master",
+        "ref": "",                      # pin to a commit SHA or tag; empty = latest commit of `branch`
+        "max_download_mb": 100,
     },
     "ui": {
         "theme": "system",              # system | light | dark
@@ -76,6 +82,10 @@ allow_internet = false
 
 [analysis]
 execution_wait = 5
+timeout = 900               # seconds; the VM is powered off when it expires
+max_sample_mb = 256
+max_events = 20000
+max_pcap_mb = 200
 
 [scoring]
 yara_match = 40
@@ -91,6 +101,8 @@ malicious_threshold = 70
 [rules]
 repo_url = "https://github.com/Yara-Rules/rules"
 branch = "master"
+ref = ""                    # pin a commit SHA or tag; empty = latest commit of branch
+max_download_mb = 100
 
 [ui]
 theme = "system"            # system | light | dark

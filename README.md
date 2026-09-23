@@ -43,14 +43,16 @@ YEMU is a local malware analysis sandbox for Linux and Windows. It runs a sample
 
 ### Scoring
 
+Only activity from the sample's own process tree (from strace) is scored. Background traffic from the guest OS shows up in the PCAP as IOCs, but it doesn't count.
+
 | Finding | Points |
 |---|---|
-| Any YARA match | +40 (+10 more if there are over 3 matches) |
-| Network C2 alert | +30 |
-| Suspicious syscalls | +5 each, max +20 |
-| Persistence | +10 |
+| Any YARA match (static or in memory) | +40 (+10 more if there are over 3 matches) |
+| Connection to a public IP address | +30 |
+| Suspicious behaviour: reading sensitive files (`/etc/shadow`, SSH keys, ...); running downloaders, interpreters or system tools (`curl`, `wget`, `nc`, `python`, `crontab`, ...); spawning a shell; deleting files outside `/tmp` | +5 each, max +20 |
+| Persistence: writing to cron, systemd units, init scripts, shell profiles, `ld.so.preload` or `authorized_keys` | +10 |
 
-The score is capped at 100. Under 30 is **clean**, 30–69 is **suspicious**, and 70 or more is **malicious**. You can change every weight and threshold in the `[scoring]` section of the config file.
+The score is capped at 100. Under 30 is **clean**, 30–69 is **suspicious**, and 70 or more is **malicious**. You can change every weight and threshold in the `[scoring]` section of the config file. Each analysis stores the weights it was scored with and the list of reasons. The report's **Why this verdict** section shows that list.
 
 ## Platform support
 
@@ -124,7 +126,8 @@ Inside **WSL2**, the script also:
 
 | What | Linux | Windows |
 |---|---|---|
-| Database, reports, captures, synced rules | `~/.local/share/yemu/` | `%LOCALAPPDATA%\YEMU\` |
+| Database, reports, captures, synced rules, logs | `~/.local/share/yemu/` | `%LOCALAPPDATA%\YEMU\` |
+| Log file (rotated, 5 × 5 MB) | `~/.local/share/yemu/logs/yemu.log` | `%LOCALAPPDATA%\YEMU\logs\yemu.log` |
 | Config file | `~/.config/yemu/config.toml` | `%LOCALAPPDATA%\YEMU\config.toml` |
 | VM disks and base images | `/var/tmp/yemu-$USER/` (must be readable by QEMU) | `%LOCALAPPDATA%\YEMU\vms\` |
 | `qemu` backend VMs (config, disk, console log) | `<VM storage>/qemu/<name>/` | same |
@@ -144,9 +147,9 @@ yemu config           # shows the effective settings
 | `[vm]` | `backend` (`auto`/`libvirt`/`qemu`/`mock`), `default_vm`, `default_snapshot`, `agent_timeout` |
 | `[qemu]` | `bin_dir` (where QEMU is installed, if not on PATH), `accel` (`auto`/`whpx`/`kvm`/`hvf`/`tcg`), `extra_args` |
 | `[network]` | `name`, `allow_internet` (turns off the isolation warning) |
-| `[analysis]` | `execution_wait` (seconds before logs are collected) |
+| `[analysis]` | `execution_wait` (seconds before logs are collected), `timeout`, `max_sample_mb`, `max_events`, `max_pcap_mb` |
 | `[scoring]` | score weights and verdict thresholds |
-| `[rules]` | `repo_url`, `branch` for rule sync |
+| `[rules]` | `repo_url`, `branch`, `ref` (pin a commit or tag), `max_download_mb` |
 | `[ui]` | `theme` (`system`/`light`/`dark`) |
 
 You can also edit all of these on the desktop app's **Settings** page.
@@ -223,11 +226,20 @@ yemu analyze sample.bin --backend mock --json
 yemu reports                                  # recent analyses
 yemu report 12                                # one analysis + events, as JSON
 yemu list-vms
-yemu sync-rules [--repo URL --branch BRANCH]
+yemu sync-rules [--repo URL --branch BRANCH --ref SHA_OR_TAG]
 yemu paths | yemu config [--init] | yemu doctor
 ```
 
-`yemu analyze` exits with **3** when the verdict is `malicious`, so you can use it in scripts and pipelines.
+`yemu analyze` exit codes for scripts and pipelines:
+
+| Code | Meaning |
+|---|---|
+| 0 | Done; verdict is `clean` or `suspicious` |
+| 3 | Done; verdict is `malicious` |
+| 4 | The analysis `failed` or hit its `timeout`; the verdict is based on partial results |
+| 1 / 2 | It couldn't start (bad sample, no backend, database error) |
+
+Each analysis ends with a **status**: `completed`, `failed` (the VM couldn't be prepared safely), `timeout`, or `manual` (interactive session). If YEMU was killed mid-run, the status is `interrupted`.
 
 ## Safety
 
@@ -237,6 +249,24 @@ yemu paths | yemu config [--init] | yemu doctor
   ```
 - VMs created by older versions of the script used a NAT network and the fixed password `analysis-password`. Re-run **Prepare New VM** to rebuild them.
 - Guest SSH password login is disabled. YEMU talks to the guest only through qemu-guest-agent. Treat the guest as untrusted and never bridge it to your LAN.
+- **A sample never runs on a dirty VM.** If the snapshot revert, the boot, the guest agent or the injection fails, the analysis is marked `failed` before anything executes.
+- **Every run has hard limits**, set under `[analysis]` in the config:
+
+  | Setting | Default | What it does |
+  |---|---|---|
+  | `timeout` | 900 s | After this, the analysis stops and the VM is powered off |
+  | `max_sample_mb` | 256 | Larger samples are refused |
+  | `max_events` | 20000 | Behaviour events stored per analysis |
+  | `max_pcap_mb` | 200 | Larger captures aren't copied back to the host |
+
+  The VM is always powered off at the end, even after a crash.
+- **Guest output is treated as hostile.** Each run uses a random working folder in the guest (`/tmp/yemu-<random>`). All guest commands are shell-quoted. File names read back from the guest are checked against a strict pattern. The in-guest memory scan only looks at the sample's own processes.
+- **YARA rule sync is pinned and sandboxed.**
+  - The branch is resolved to an exact commit, which is recorded in the manifest. To pin a tag or SHA, set `[rules].ref`.
+  - Downloads (`max_download_mb`) and individual rule files are size-capped.
+  - Archive paths can't escape the rules folder.
+  - Every rule must compile.
+  - The new rule set replaces the old one atomically.
 - Always analyse from a reverted snapshot. The pipeline reverts automatically, but manual (GUI) sessions leave the VM running.
 
 ## Testing
@@ -261,6 +291,8 @@ Tests live in `tests/`. CI (`.github/workflows/tests.yml`) runs them on Ubuntu a
 | App shows "Mock Mode" | No backend is available. Run `yemu doctor`: it checks QEMU, acceleration, libvirt and your groups. |
 | Windows: `doctor` reports `tcg` instead of `whpx` | Enable **Windows Hypervisor Platform** (see Installation) and reboot. TCG works, but it's slow. |
 | Windows: QEMU exits with `WHPX: Unexpected VP exit code 4` | Don't force a CPU model. Remove `-cpu` from `[qemu].extra_args`. YEMU already uses the default CPU model under WHPX. |
+| An analysis shows `failed` | The report's banner and `yemu report <id>` show the reason, for example a missing snapshot or an agent that didn't answer. `yemu.log` has the full trace. |
+| Database upgrade | YEMU migrates its SQLite schema automatically when it starts (`PRAGMA user_version`). Older databases are upgraded in place. |
 | qemu backend: guest agent timeout during `vm create` | Look at `<VM storage>/qemu/<name>/console.log` to follow cloud-init, and at `qemu.log` for QEMU errors. |
 
 ## Project layout

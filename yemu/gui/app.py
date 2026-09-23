@@ -17,7 +17,8 @@ def create_window(app=None, db_path=None):
 
 
 def main(argv=None):
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(name)s: %(message)s")
+    from yemu.logging_setup import setup_logging
+    setup_logging(console_level=logging.INFO)
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("YEMU")
     app.setOrganizationName("YEMU")

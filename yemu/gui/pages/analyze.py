@@ -305,9 +305,15 @@ class AnalyzePage(QWidget):
         if not details:
             return
         verdict = details.get("verdict") or "unknown"
-        self.status.setText(f"Done · {verdict}")
+        run_status = details.get("status") or "completed"
+        self.status.setText(f"Done · {verdict}" if run_status == "completed" else f"{run_status.capitalize()} · {verdict}")
         self.gauge.set_score(details.get("threat_score") or 0, verdict)
         self.result_badge.set_verdict(verdict)
         self.result_title.setText(f"#{details['id']}  {details.get('filename')}")
-        self.result_meta.setText("Analysis complete. Open the report for YARA hits, the process tree and network IOCs.")
+        if run_status in ("failed", "timeout"):
+            self.result_meta.setText(f"Analysis {run_status}: {details.get('error') or 'see the log'}. "
+                                     "The verdict is based on partial results.")
+        else:
+            self.result_meta.setText("Analysis complete. Open the report to see why it got this verdict, the process "
+                                     "tree and network IOCs.")
         self.result_card.show()

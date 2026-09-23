@@ -56,11 +56,15 @@ class SettingsPage(QWidget):
         self.default_snap = QLineEdit()
         self.agent_timeout = _spin(30, 3600, " s")
         self.exec_wait = _spin(0, 3600, " s")
+        self.timeout = _spin(60, 86400, " s")
+        self.max_sample = _spin(1, 4096, " MB")
         f.addRow("Backend", self.backend)
         f.addRow("Default VM", self.default_vm)
         f.addRow("Default snapshot", self.default_snap)
         f.addRow("Guest agent timeout", self.agent_timeout)
         f.addRow("Run sample for", self.exec_wait)
+        f.addRow("Analysis time limit", self.timeout)
+        f.addRow("Largest sample", self.max_sample)
         vl.addLayout(f)
         vl.addStretch(1)
         grid.addWidget(vm_card, 0, 0)
@@ -168,6 +172,8 @@ class SettingsPage(QWidget):
         self.default_snap.setText(c["vm"]["default_snapshot"])
         self.agent_timeout.setValue(int(c["vm"]["agent_timeout"]))
         self.exec_wait.setValue(int(c["analysis"]["execution_wait"]))
+        self.timeout.setValue(int(c["analysis"]["timeout"]))
+        self.max_sample.setValue(int(c["analysis"]["max_sample_mb"]))
         self.bin_dir.setText(c["qemu"]["bin_dir"])
         self.accel.setCurrentText(c["qemu"]["accel"])
         self.extra_args.setText(" ".join(c["qemu"]["extra_args"]))
@@ -199,7 +205,8 @@ class SettingsPage(QWidget):
         c["vm"].update(backend=self.backend.currentText(), default_vm=self.default_vm.text().strip(),
                        default_snapshot=self.default_snap.text().strip() or "clean-baseline",
                        agent_timeout=self.agent_timeout.value())
-        c["analysis"]["execution_wait"] = self.exec_wait.value()
+        c["analysis"].update(execution_wait=self.exec_wait.value(), timeout=self.timeout.value(),
+                             max_sample_mb=self.max_sample.value())
         c["qemu"].update(bin_dir=self.bin_dir.text().strip(), accel=self.accel.currentText(),
                          extra_args=self.extra_args.text().split())
         c["network"].update(name=self.net_name.text().strip() or "malware-analysis",

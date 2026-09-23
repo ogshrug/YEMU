@@ -52,6 +52,9 @@ class YaraEngine:
                     self.logger.error("Failed to compile index.yar, loading rule files individually")
                 idx = 0
                 for file_path in sorted(self.rules_dir.rglob("*")):
+                    # skip hidden dirs such as an in-progress sync's .sync-* staging folder
+                    if any(part.startswith(".") for part in file_path.relative_to(self.rules_dir).parts):
+                        continue
                     if file_path.suffix in (".yar", ".yara") and file_path.name != "index.yar":
                         if self._compiles(file_path):  # skip problematic files
                             rule_files[f"ns_{idx}"] = str(file_path)
@@ -157,82 +160,67 @@ class YaraEngine:
             self.logger.error(f"Failed to save compiled rules: {e}")
             return False
 
+    HEADER = re.compile(r'^(\w+)\s+(?:\[(.*?)\]\s+)?(\S+)$')
+    META_PAIR = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|[^,]*)')
+
     def parse_yara_cli_output(self, output):
         """
-        Parses YARA CLI output with --print-meta --print-strings flags.
-        Example line: suspicious_rule [tag1] /proc/1234/mem
+        Parses YARA CLI output (-m/--print-meta, -s/--print-strings). Targets can be a PID
+        (process memory scan) or a path such as /proc/1234/... Headers look like:
+            rule_name [author="x",description="y"] 1234
+            rule_name /proc/1234/mem
         """
         matches = []
         current_match = None
-
-        lines = output.splitlines()
-        for line in lines:
+        for line in output.splitlines():
             line = line.strip()
-            if not line:
+            if not line or line == "TIMEOUT":
                 continue
 
-            # Check for new match: rule_name [tags] path
-            # Regex to match: rule [tag1,tag2] /path/to/file
-            match_header = re.match(r'^(\w+)\s+\[(.*?)\]\s+(.*)$', line)
-            # Or without tags: rule /path/to/file
-            if not match_header:
-                match_header = re.match(r'^(\w+)\s+(/.*)$', line)
-                if match_header:
-                    rule_name = match_header.group(1)
-                    tags = []
-                    path = match_header.group(2)
-                else:
-                    rule_name = None
-            else:
-                rule_name = match_header.group(1)
-                tags = [t.strip() for t in match_header.group(2).split(',')]
-                path = match_header.group(3)
+            string_match = re.match(r'^(0x[0-9a-fA-F]+):(\$[^{}\s:]*):\s*(.*)$', line)
+            if string_match and current_match:
+                offset, identifier, data = string_match.groups()
+                current_match["strings"].append({"offset": offset, "identifier": identifier,
+                                                 "data": data, "printable": data[:64]})
+                continue
 
-            if rule_name:
+            header = self.HEADER.match(line)
+            if header:
+                rule_name, bracket, target = header.groups()
                 if current_match:
                     matches.append(current_match)
-
+                meta, tags = {}, []
+                if bracket:
+                    if "=" in bracket:
+                        meta = {k: v.strip('"') for k, v in self.META_PAIR.findall(bracket)}
+                    else:
+                        tags = [t.strip() for t in bracket.split(",") if t.strip()]
                 pid = "N/A"
-                if "/proc/" in path:
-                    # Extract PID from /proc/<pid>/mem
-                    parts = path.split('/')
-                    if len(parts) > 2 and parts[1] == 'proc' and parts[2].isdigit():
+                if target.isdigit():
+                    pid = target
+                else:
+                    parts = target.split("/")
+                    if len(parts) > 2 and parts[1] == "proc" and parts[2].isdigit():
                         pid = parts[2]
-
                 current_match = {
                     "rule": rule_name,
                     "tags": tags,
-                    "meta": {},
+                    "meta": meta,
                     "strings": [],
-                    "path": path,
+                    "path": target,
                     "pid": pid,
                     "process_name": "unknown",
-                    "exe_path": path if pid == "N/A" else "[unreadable]",
-                    "cmdline": "[unreadable]"
+                    "exe_path": target if pid == "N/A" else "[unreadable]",
+                    "cmdline": "[unreadable]",
                 }
                 continue
 
-            if current_match:
-                # Check for meta: key=value or key: value
-                meta_match = re.match(r'^(\w+)\s*[:=]\s*(.*)$', line)
-                if meta_match and not line.startswith('0x'):
-                    key, val = meta_match.groups()
-                    current_match["meta"][key] = val.strip('"')
-                    continue
-
-                # Check for strings: 0xoffset:identifier: data
-                string_match = re.match(r'^(0x[0-9a-fA-F]+):(\$[^{}\s]*):\s*(.*)$', line)
-                if string_match:
-                    offset, identifier, data = string_match.groups()
-                    # data might be hex or string in YARA CLI
-                    current_match["strings"].append({
-                        "offset": offset,
-                        "identifier": identifier,
-                        "data": data,
-                        "printable": "" # Would need more complex parsing to get both
-                    })
+            # older CLI style: meta printed on its own lines
+            meta_match = re.match(r'^(\w+)\s*[:=]\s*(.*)$', line)
+            if meta_match and current_match:
+                key, val = meta_match.groups()
+                current_match["meta"][key] = val.strip('"')
 
         if current_match:
             matches.append(current_match)
-
         return matches

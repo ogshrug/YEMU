@@ -1,74 +1,107 @@
-import unittest
-from unittest.mock import patch, MagicMock
-import os
-import shutil
-import json
 import io
+import json
+import os
 import zipfile
-from yemu.core.yara_sync import YaraRuleSync
+from unittest.mock import MagicMock
 
-class TestYaraRuleSync(unittest.TestCase):
-    def setUp(self):
-        self.test_rules_dir = "test_yara_rules"
-        self.sync_tool = YaraRuleSync(rules_dir=self.test_rules_dir)
-        if os.path.exists(self.test_rules_dir):
-            shutil.rmtree(self.test_rules_dir)
+import pytest
 
-    def tearDown(self):
-        if os.path.exists(self.test_rules_dir):
-            shutil.rmtree(self.test_rules_dir)
+from yemu.core import yara_sync
+from yemu.core.yara_sync import RuleSyncError, YaraRuleSync
 
-    @patch('requests.get')
-    @patch('yara.compile')
-    def test_sync_success(self, mock_yara_compile, mock_get):
-        # Create a fake zip in memory
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
-            zip_file.writestr('rules-master/malware/test.yar', 'rule test { condition: true }')
-            zip_file.writestr('rules-master/readme.txt', 'not a yara rule')
-            zip_file.writestr('rules-master/broken.yar', 'rule broken { condition: error }')
+SHA = "a" * 40
 
-        zip_buffer.seek(0)
 
-        # Mock response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.headers = {'content-length': str(len(zip_buffer.getvalue()))}
-        mock_response.iter_content.return_value = [zip_buffer.getvalue()]
-        mock_get.return_value = mock_response
+def _zip(files):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, content in files.items():
+            z.writestr(name, content)
+    return buf.getvalue()
 
-        # Mock yara.compile: succeed for test.yar, fail for broken.yar
-        def side_effect(source=None, filepath=None):
-            if source and 'error' in source:
-                raise Exception("Yara compile error")
-            return MagicMock()
 
-        mock_yara_compile.side_effect = side_effect
+def _fake_get(archive, requested):
+    def get(url, **kwargs):
+        requested.append(url)
+        resp = MagicMock()
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda s, *a: None
+        if "api.github.com" in url:
+            resp.ok, resp.status_code, resp.text = True, 200, SHA
+        else:
+            resp.headers = {"content-length": str(len(archive))}
+            resp.iter_content.return_value = [archive]
+            resp.raise_for_status.return_value = None
+        return resp
+    return get
 
-        # Run sync
-        manifest = self.sync_tool.sync()
 
-        # Verify results
-        self.assertEqual(manifest['file_count'], 1)
-        self.assertEqual(len(manifest['skipped_files']), 1)
-        self.assertTrue(os.path.exists(os.path.join(self.test_rules_dir, "malware/test.yar")))
-        self.assertFalse(os.path.exists(os.path.join(self.test_rules_dir, "broken.yar")))
+@pytest.fixture
+def rules_dir(tmp_path):
+    return tmp_path / "rules"
 
-        manifest_path = os.path.join(self.test_rules_dir, ".sync_manifest.json")
-        self.assertTrue(os.path.exists(manifest_path))
-        with open(manifest_path, 'r') as f:
-            data = json.load(f)
-            self.assertEqual(data['file_count'], 1)
 
-    @patch('requests.get')
-    def test_sync_network_failure(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.raise_for_status.side_effect = Exception("Not Found")
-        mock_get.return_value = mock_response
+def test_sync_pins_commit_validates_and_replaces(rules_dir, monkeypatch):
+    requested = []
+    archive = _zip({
+        "rules-abc/malware/good.yar": "rule good { condition: true }",
+        "rules-abc/broken.yar": "rule broken { condition: nope }",
+        "rules-abc/readme.txt": "not a rule",
+    })
+    monkeypatch.setattr(yara_sync.requests, "get", _fake_get(archive, requested))
+    sync = YaraRuleSync(rules_dir=rules_dir)
 
-        with self.assertRaises(Exception):
-            self.sync_tool.sync()
+    # a stale rule from an earlier sync must disappear after the swap
+    os.makedirs(sync.target_dir)
+    open(os.path.join(sync.target_dir, "stale.yar"), "w").write("rule stale { condition: true }")
 
-if __name__ == '__main__':
-    unittest.main()
+    manifest = sync.sync()
+    assert manifest["commit"] == SHA and not manifest["pinned"]
+    assert manifest["file_count"] == 1
+    assert [s["file"] for s in manifest["skipped_files"]] == ["rules-abc/broken.yar"]
+    assert os.path.isfile(os.path.join(sync.target_dir, "malware", "good.yar"))
+    assert not os.path.exists(os.path.join(sync.target_dir, "stale.yar"))
+    assert requested[-1].endswith(f"/archive/{SHA}.zip")
+    with open(rules_dir / ".sync_manifest.json", encoding="utf-8") as f:
+        assert json.load(f)["commit"] == SHA
+
+
+def test_pinned_ref_skips_resolution(rules_dir, monkeypatch):
+    requested = []
+    monkeypatch.setattr(yara_sync.requests, "get",
+                        _fake_get(_zip({"r-v1/x.yar": "rule x { condition: true }"}), requested))
+    manifest = YaraRuleSync(rules_dir=rules_dir, ref="v1.2").sync()
+    assert manifest["pinned"] and manifest["commit"] == "v1.2"
+    assert not any("api.github.com" in u for u in requested)
+
+
+def test_zip_slip_entries_are_rejected(rules_dir, monkeypatch):
+    archive = _zip({
+        "r-x/../../evil.yar": "rule evil { condition: true }",
+        "r-x/ok.yar": "rule ok { condition: true }",
+    })
+    monkeypatch.setattr(yara_sync.requests, "get", _fake_get(archive, []))
+    manifest = YaraRuleSync(rules_dir=rules_dir).sync()
+    assert manifest["file_count"] == 1
+    assert "unsafe path" in manifest["skipped_files"][0]["error"]
+    assert not (rules_dir.parent / "evil.yar").exists()
+
+
+def test_download_size_limit(rules_dir, monkeypatch):
+    archive = _zip({"r-x/big.yar": "x" * 2_000_000})
+    monkeypatch.setattr(yara_sync.requests, "get", _fake_get(archive, []))
+    sync = YaraRuleSync(rules_dir=rules_dir, max_download_mb=0)
+    with pytest.raises(RuleSyncError):
+        sync.sync()
+    assert not os.path.exists(sync.target_dir)
+
+
+@pytest.mark.parametrize("url", ["https://evil.example/owner/repo", "file:///etc/passwd", "https://github.com/a"])
+def test_rejects_non_github_urls(url):
+    with pytest.raises(RuleSyncError):
+        YaraRuleSync(repo_url=url)
+
+
+def test_rejects_bad_ref():
+    with pytest.raises(RuleSyncError):
+        YaraRuleSync(ref="../../x")
