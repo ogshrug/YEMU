@@ -9,6 +9,7 @@ from ui.dashboard import Dashboard
 from ui.log_viewer import LogViewer
 from ui.yara_editor import YaraEditor
 from ui.report_view import ReportView
+from core.vm_manager import MockVMManager
 import os
 import subprocess
 
@@ -24,26 +25,18 @@ class MainWindow(Adw.ApplicationWindow):
             return
         self._loading_analysis_id = analysis_id
 
-        import asyncio
         import threading
         import json
 
         GLib.idle_add(self._append_log, f"Loading analysis #{analysis_id}...", "INFO")
 
         def load_details():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
-                details = loop.run_until_complete(self.db.get_analysis_details(analysis_id))
-                events_raw = loop.run_until_complete(self.db.get_analysis_events(analysis_id))
+                details = self.runner.run(self.db.get_analysis_details(analysis_id))
+                events_raw = self.runner.run(self.db.get_analysis_events(analysis_id))
             except Exception:
                 details = None
                 events_raw = None
-            finally:
-                try:
-                    loop.close()
-                except Exception:
-                    pass
 
             if not details:
                 GLib.idle_add(self._append_log, f"Analysis #{analysis_id} not found.", "WARN")
@@ -120,25 +113,17 @@ class MainWindow(Adw.ApplicationWindow):
         self._append_log(f"Submitting {filename} for analysis on {vm_name} ({snap_name})...", "INFO")
 
         import threading
-        import asyncio
         def run_async():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(self.orchestrator.run_analysis(
+                self.runner.run(self.orchestrator.run_analysis(
                     filename,
                     guest_os=vm_name,
                     snapshot_name=snap_name,
                     run_gui=run_gui,
                     run_pcap=run_pcap
                 ))
-            except Exception:
-                pass
-            finally:
-                try:
-                    loop.close()
-                except Exception:
-                    pass
+            except Exception as e:
+                self._append_log(f"Analysis crashed: {e}", "CRITICAL")
             GLib.idle_add(self._on_analysis_complete)
 
         threading.Thread(target=run_async, daemon=True).start()
@@ -152,24 +137,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._update_recent_analyses()
 
     def _update_recent_analyses(self):
-        import asyncio
         import threading
 
         def fetch_analyses():
             if not getattr(self.db, 'conn', None):
                 return
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
-                analyses = loop.run_until_complete(self.db.get_recent_analyses())
-                analyses = analyses or []
+                analyses = self.runner.run(self.db.get_recent_analyses()) or []
             except Exception:
                 analyses = []
-            finally:
-                try:
-                    loop.close()
-                except Exception:
-                    pass
             GLib.idle_add(self._populate_analysis_list, analyses)
 
         threading.Thread(target=fetch_analyses, daemon=True).start()
@@ -215,7 +191,6 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_vm_list_error(self, e):
         self._append_log(f"Error listing VMs: {e}. Falling back to Mock Mode.", "CRITICAL")
         if not isinstance(self.orchestrator.vm_manager, MockVMManager):
-            from core.vm_manager import MockVMManager
             self.orchestrator.vm_manager = MockVMManager(ui_callback=self._append_log)
             vms = [""] + sorted(self.orchestrator.vm_manager.list_vms())
             self.vm_dropdown.set_model(Gtk.StringList.new(vms))
@@ -432,10 +407,10 @@ class MainWindow(Adw.ApplicationWindow):
         # Database and Orchestrator
         from storage.db import Database
         from core.orchestrator import Orchestrator
-        from core.vm_manager import VMManager, MockVMManager
-        import threading
-        import asyncio
+        from core.vm_manager import VMManager
+        from core.async_runner import AsyncRunner
 
+        self.runner = AsyncRunner()
         self.db = Database()
 
         def ui_callback(msg, severity="INFO"):
@@ -456,21 +431,13 @@ class MainWindow(Adw.ApplicationWindow):
         self._update_vm_list()
         self._validate_submit()
 
-        def init_db():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self.db.connect())
-            except Exception:
-                pass
-            finally:
-                try:
-                    loop.close()
-                except Exception:
-                    pass
+        def on_db_ready(_, error):
+            if error:
+                self._append_log(f"Database connection failed: {error}", "CRITICAL")
+                return
             GLib.idle_add(self._update_recent_analyses)
 
-        threading.Thread(target=init_db, daemon=True).start()
+        self.runner.submit(self.db.connect(), on_done=on_db_ready)
 
         # Stack Switcher in Header
         switcher = Gtk.StackSwitcher()

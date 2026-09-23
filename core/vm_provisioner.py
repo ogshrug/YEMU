@@ -5,6 +5,7 @@ import yaml
 import tempfile
 import subprocess
 import shutil
+import secrets
 
 class VMProvisioner:
     DISTROS = {
@@ -43,6 +44,8 @@ class VMProvisioner:
                     os.makedirs(download_dir, exist_ok=True)
         self.download_dir = download_dir
         self.logger = logging.getLogger(__name__)
+        # Per-provisioner random guest password instead of a hard-coded one
+        self.guest_password = secrets.token_urlsafe(12)
 
     def download_file(self, url, filename=None):
         if not filename:
@@ -159,9 +162,9 @@ class VMProvisioner:
             "package_update": True,
             "package_upgrade": True,
             "packages": ["qemu-guest-agent", "strace", "tcpdump", "curl"],
-            "password": "analysis-password",
+            "password": self.guest_password,
             "chpasswd": {"expire": False},
-            "ssh_pwauth": True,
+            "ssh_pwauth": False,
             "runcmd": [
                 ["systemctl", "enable", "--now", "qemu-guest-agent"],
             ]
@@ -241,7 +244,7 @@ class VMProvisioner:
                 <LocalAccounts>
                     <LocalAccount wcm:action="add">
                         <Password>
-                            <Value>analysis-password</Value>
+                            <Value>{password}</Value>
                             <PlainText>true</PlainText>
                         </Password>
                         <Description>Analyst Account</Description>
@@ -253,7 +256,7 @@ class VMProvisioner:
             </UserAccounts>
             <AutoLogon>
                 <Password>
-                    <Value>analysis-password</Value>
+                    <Value>{password}</Value>
                     <PlainText>true</PlainText>
                 </Password>
                 <Enabled>true</Enabled>
@@ -278,7 +281,7 @@ class VMProvisioner:
         </component>
     </settings>
 </unattend>
-"""
+""".replace("{password}", self.guest_password)
 
     def get_libvirt_xml(self, vm_name, ram_mb=2048, cpu_count=2, disk_path=None, iso_path=None, cloud_init_path=None, virtio_win_path=None, windows_auto_path=None):
         allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")

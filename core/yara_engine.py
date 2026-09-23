@@ -10,70 +10,63 @@ try:
 except ImportError:
     yara = None
 
+# Rules shipped with the repo; always loaded so a fresh install is never rule-less
+BUILTIN_RULES = Path(__file__).resolve().parent.parent / "rules" / "default.yar"
+
 class YaraEngine:
-    def __init__(self, rules_dir="rules/yara-rules"):
+    def __init__(self, rules_dir="rules/yara-rules", builtin_rules=BUILTIN_RULES):
         self.rules_dir = Path(rules_dir)
+        self.builtin_rules = Path(builtin_rules) if builtin_rules else None
         self.rules = None
         self.logger = logging.getLogger(__name__)
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self.load_rules()
+
+    def _compiles(self, path):
+        try:
+            yara.compile(filepath=str(path))
+            return True
+        except Exception:
+            return False
 
     def load_rules(self):
         if not yara:
             self.logger.warning("YARA module not found. Static analysis and memory scanning will be disabled.")
             return
 
+        # namespace -> file; namespaces avoid "duplicated identifier" errors across rule sets
+        rule_files = {}
+        if self.builtin_rules and self.builtin_rules.is_file() and self._compiles(self.builtin_rules):
+            rule_files["builtin"] = str(self.builtin_rules)
+
         if not self.rules_dir.is_dir():
             self.logger.warning(f"Rules directory {self.rules_dir} does not exist.")
+        else:
+            index_path = self.rules_dir / "index.yar"
+            if index_path.exists() and self._compiles(index_path):
+                rule_files["index"] = str(index_path)
+            else:
+                if index_path.exists():
+                    self.logger.error("Failed to compile index.yar, loading rule files individually")
+                idx = 0
+                for file_path in sorted(self.rules_dir.rglob("*")):
+                    if file_path.suffix in (".yar", ".yara") and file_path.name != "index.yar":
+                        if self._compiles(file_path):  # skip problematic files
+                            rule_files[f"ns_{idx}"] = str(file_path)
+                            idx += 1
+
+        if not rule_files:
+            self.logger.warning("No valid YARA rules found.")
             return
 
-        # We try to compile rules one by one if they fail in bulk
-        # But first, let's try to compile the main index
-        index_path = self.rules_dir / "index.yar"
-
-        if index_path.exists():
-            try:
-                self.rules = yara.compile(filepath=index_path)
-                self.logger.info("Successfully loaded YARA rules from index.yar")
-                return
-            except Exception as e:
-                self.logger.error(f"Failed to compile index.yar: {e}")
-
-        # If index fails or doesn't exist, we'll try to load individual categories
-        # to avoid "duplicated identifier" errors which often happen when including everything at once
-        self.logger.info("Attempting to load rules individually to avoid collisions...")
-
-        compiled_rules = []
-        for file_path in self.rules_dir.rglob("*"):
-            if (file_path.suffix in [".yar", ".yara"]) and file_path.name != "index.yar":
-                try:
-                    # Test compile individual file
-                    yara.compile(filepath=str(file_path))
-                    compiled_rules.append(str(file_path))
-                except Exception:
-                    continue # Skip problematic files
-
-        # Now try to compile the list of "good" files
-        # We still might get collisions if different files use same identifiers
-        # In a real sandbox, we might want to keep them separate or use namespaces
-        # For now, let's try to load them with unique namespaces if possible
-
-        rule_files = {}
-        for idx, path in enumerate(compiled_rules):
-            namespace = f"ns_{idx}"
-            rule_files[namespace] = path
-
         try:
-            if rule_files:
-                self.rules = yara.compile(filepaths=rule_files)
-                self.logger.info(f"Successfully loaded {len(rule_files)} YARA rule files with namespaces.")
-            else:
-                self.logger.warning("No valid YARA rules found.")
+            self.rules = yara.compile(filepaths=rule_files)
+            self.logger.info(f"Successfully loaded {len(rule_files)} YARA rule files with namespaces.")
         except Exception as e:
             self.logger.error(f"Bulk YARA compilation with namespaces failed: {e}")
-            # Last resort: just use the first successful one for now to ensure we have *something*
-            if compiled_rules:
-                self.rules = yara.compile(filepath=compiled_rules[0])
+            # Last resort: keep *something* loaded
+            fallback = rule_files.get("builtin") or next(iter(rule_files.values()))
+            self.rules = yara.compile(filepath=fallback)
 
     def _format_match(self, match):
         """Helper to format a yara.Match object into a serializable dict."""

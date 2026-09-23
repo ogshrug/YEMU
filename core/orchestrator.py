@@ -25,6 +25,7 @@ class Orchestrator:
         static_matches = []
         memory_matches = []
         all_yara_matches = []
+        all_events = []
         score = 0
         analysis_id = None
 
@@ -78,6 +79,13 @@ class Orchestrator:
                 if not ok:
                     self._notify_ui(f"VM verification failed: {msg}", "CRITICAL")
                     raise RuntimeError(msg)
+
+                if hasattr(self.vm_manager, 'find_internet_facing_networks'):
+                    exposed = await self.vm_manager.find_internet_facing_networks(guest_os)
+                    if exposed:
+                        self._notify_ui(
+                            f"WARNING: {guest_os} is not isolated ({', '.join(exposed)} can reach the host LAN/internet). "
+                            "Samples may contact live infrastructure.", "CRITICAL")
 
                 self._notify_ui(f"Reverting VM to snapshot {snapshot_name}...")
                 await self.vm_manager.revert_to_snapshot(guest_os, snapshot_name=snapshot_name)
@@ -228,13 +236,13 @@ class Orchestrator:
                         content = await self.vm_manager.run_command(guest_os, f"cat {log_file}")
                         events_chunk = monitor.parse_strace(content.splitlines(), pid=pid)
                         events_chunk.sort(key=lambda x: x.get('timestamp', 0))
+                        all_events.extend(events_chunk)
                         for ev in events_chunk:
                             if analysis_id:
                                 await self.db.add_event(analysis_id, ev['type'], ev.get('timestamp', 0), "WARN", ev)
                             self._notify_ui(f"Behavior: {ev.get('syscall', 'unknown')}", "WARN")
                 except Exception as e:
                     self._notify_ui(f"Strace collection failed: {e}", "WARN")
-                    all_events = []
             except Exception as e:
                 self._notify_ui(f"Result collection failed: {e}", "WARN")
 

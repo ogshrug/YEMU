@@ -45,7 +45,7 @@ def load_css():
 
 class YemuApp(Adw.Application):
     def __init__(self, **kwargs):
-        super().__init__(application_id='com.jules.malwaresandbox',
+        super().__init__(application_id='io.github.ogshrug.YEMU',
                          flags=Gio.ApplicationFlags.FLAGS_NONE,
                          **kwargs)
 

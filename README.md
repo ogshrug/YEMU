@@ -87,12 +87,15 @@ The pipeline needs a libvirt domain that has **qemu-guest-agent** running and a 
 
 Click **Prepare New VM** in the app, or run `bash ui/prepare_vm.sh`. The script:
 
-1. Creates the `malware-analysis` libvirt network (`192.168.100.0/24`).
+1. Creates two libvirt networks:
+   - `malware-analysis` (`192.168.100.0/24`) is **isolated**, with no internet access. Analysis runs here.
+   - `yemu-provision` (`192.168.101.0/24`) uses NAT and is only used while the guest installs its tools.
 2. Downloads an Ubuntu 24.04 or Debian 12 cloud image, or a Windows 11 evaluation ISO plus VirtIO drivers.
 3. Builds a cloud-init seed that installs `qemu-guest-agent`, `strace` and `tcpdump`.
-4. Defines and boots the VM, waits for the guest agent, then takes the `clean-baseline` snapshot.
+4. Defines and boots the VM on `yemu-provision`, then waits for the guest agent.
+5. Moves the VM onto `malware-analysis`, reboots it, then takes the `clean-baseline` snapshot.
 
-Images and disks are stored in `/tmp/gpcssi-$USER/`.
+Images and disks are stored in `/var/tmp/yemu-$USER/`. You can override this with `YEMU_DATA_DIR`. A random guest console password is generated for each VM and saved to `<data dir>/<vm>.credentials` (mode 600).
 
 ### Manual
 
@@ -133,16 +136,17 @@ python main.py        # or: make run
 | Database | `malware_sandbox.db` (working directory) |
 | Reports | `assets/reports/report_<id>.{json,pdf}` |
 | PCAPs | `storage/captures/<id>.pcap` |
-| Built-in rules | `rules/default.yar` |
+| Built-in rules (always loaded) | `rules/default.yar` |
 | Synced rules | `rules/yara-rules/` |
 
 ## Safety
 
-- **Check the network isolation.** `ui/prepare_vm.sh` defines `malware-analysis` with `<forward mode='nat'/>`, which gives the guest **internet access**. For truly offline analysis, remove the `<forward>` element, or redefine the network without it:
+- **The analysis network is offline by default.** Before every run, YEMU checks the VM's interfaces. If any interface can reach the host LAN or the internet (a NAT or routed libvirt network, or a bridge/direct interface), it logs a `CRITICAL` warning. To deliberately give samples internet access, provision with `YEMU_ALLOW_INTERNET=1 bash ui/prepare_vm.sh`.
   ```bash
-  virsh net-dumpxml malware-analysis   # confirm there is no <forward> element
+  virsh net-dumpxml malware-analysis   # an isolated network has no <forward> element
   ```
-- The cloud-init seed sets a fixed guest password (`analysis-password`) and enables SSH password login. Treat the guest as untrusted and never bridge it to your LAN.
+- VMs created by older versions of the script used a NAT network and the fixed password `analysis-password`. Re-run **Prepare New VM** to rebuild them.
+- Guest SSH password login is disabled. YEMU talks to the guest only through qemu-guest-agent. Treat the guest as untrusted and never bridge it to your LAN.
 - Always analyse from a reverted snapshot. The pipeline reverts automatically, but manual (GUI) sessions leave the VM running.
 
 ## Testing

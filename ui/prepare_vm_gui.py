@@ -195,6 +195,7 @@ class VMPrepareWindow(Gtk.Window):
 
             GLib.idle_add(self.progress_bar.set_fraction, 1.0)
             GLib.idle_add(self._append_log, "VM Preparation COMPLETED SUCCESSFULLY.")
+            GLib.idle_add(self._append_log, f"Guest console password: {self.provisioner.guest_password}")
 
         except Exception as e:
             GLib.idle_add(self._append_log, f"ERROR: {str(e)}")

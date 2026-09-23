@@ -358,6 +358,31 @@ class VMManager:
         except Exception as e:
             return False, str(e)
 
+    async def find_internet_facing_networks(self, vm_name):
+        """Return names of libvirt networks attached to vm_name that forward traffic off-host."""
+        import xml.etree.ElementTree as ET
+        dom = self._get_domain(vm_name)
+        if not dom:
+            return []
+        exposed = []
+        try:
+            conn = self._get_conn()
+            root = ET.fromstring(dom.XMLDesc(0))
+            for src in root.findall("./devices/interface[@type='network']/source"):
+                net_name = src.get("network")
+                if not net_name:
+                    continue
+                net_root = ET.fromstring(conn.networkLookupByName(net_name).XMLDesc(0))
+                if net_root.find("forward") is not None:
+                    exposed.append(net_name)
+            # bridge/direct interfaces put the guest straight on a host network
+            for iface in root.findall("./devices/interface"):
+                if iface.get("type") in ("bridge", "direct"):
+                    exposed.append(f"{iface.get('type')} interface")
+        except (libvirt.libvirtError, ET.ParseError) as e:
+            self.logger.warning(f"Could not inspect networks for {vm_name}: {e}")
+        return exposed
+
     async def revert_to_snapshot(self, vm_name, snapshot_name="clean-baseline"):
         dom = self._get_domain(vm_name)
         if not dom:
@@ -533,6 +558,9 @@ packer_match [packer] /proc/5678/mem
 
     async def verify_environment(self, vm_name):
         return True, "OK"
+
+    async def find_internet_facing_networks(self, vm_name):
+        return []
 
     async def revert_to_snapshot(self, vm_name, snapshot_name="clean-baseline"):
         return True

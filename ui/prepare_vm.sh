@@ -7,11 +7,15 @@ RAM="2048"
 CPU="2"
 DISK_SIZE="20"
 DOWNLOAD_DIR=""
-NETWORK_NAME="malware-analysis"
+NETWORK_NAME="malware-analysis"          # isolated, no internet: used for analysis
+PROVISION_NETWORK="yemu-provision"       # NAT: only used while installing guest tools
+ALLOW_INTERNET="${YEMU_ALLOW_INTERNET:-0}"  # 1 = give the analysis network NAT (not recommended)
+GUEST_PASSWORD=""
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DATA_DIR="/tmp/gpcssi-$USER"
+# /var/tmp survives reboots and stays readable by the qemu system user
+DATA_DIR="${YEMU_DATA_DIR:-/var/tmp/yemu-$USER}"
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-$DATA_DIR}"
 DISK_DIR="$DATA_DIR"
 LOG_FILE=""
@@ -118,34 +122,65 @@ show_progress() {
     echo "$pct"
 }
 
-ensure_network() {
-    log "Ensuring isolated network '$NETWORK_NAME'..."
-    if virsh net-info "$NETWORK_NAME" &>/dev/null; then
-        log "Network '$NETWORK_NAME' already exists."
-        # Destroy and redefine to ensure NAT is enabled
-        virsh net-destroy "$NETWORK_NAME" &>/dev/null || true
-        virsh net-undefine "$NETWORK_NAME" &>/dev/null || true
+define_network() {
+    local name="$1" bridge="$2" subnet="$3" nat="$4"
+    if virsh net-info "$name" &>/dev/null; then
+        virsh net-destroy "$name" &>/dev/null || true
+        virsh net-undefine "$name" &>/dev/null || true
     fi
 
-    log "Creating network '$NETWORK_NAME' with NAT..."
+    local forward=""
+    [[ "$nat" == "1" ]] && forward="<forward mode='nat'/>"
+
     local xml
     xml=$(cat <<EOF
 <network>
-  <name>$NETWORK_NAME</name>
-  <forward mode='nat'/>
-  <bridge name='virbr-malware' stp='on' delay='0'/>
-  <ip address='192.168.100.1' netmask='255.255.255.0'>
+  <name>$name</name>
+  $forward
+  <bridge name='$bridge' stp='on' delay='0'/>
+  <ip address='$subnet.1' netmask='255.255.255.0'>
     <dhcp>
-      <range start='192.168.100.10' end='192.168.100.100'/>
+      <range start='$subnet.10' end='$subnet.100'/>
     </dhcp>
   </ip>
 </network>
 EOF
 )
     virsh net-define /dev/stdin <<<"$xml" || return 1
-    virsh net-autostart "$NETWORK_NAME" || true
-    virsh net-start "$NETWORK_NAME" || true
-    log "Network '$NETWORK_NAME' created."
+    virsh net-autostart "$name" || true
+    virsh net-start "$name" || true
+}
+
+ensure_network() {
+    if [[ "$ALLOW_INTERNET" == "1" ]]; then
+        warn "YEMU_ALLOW_INTERNET=1: analysis network '$NETWORK_NAME' will have internet access."
+    fi
+    log "Defining analysis network '$NETWORK_NAME' (internet: $ALLOW_INTERNET)..."
+    define_network "$NETWORK_NAME" "virbr-malware" "192.168.100" "$ALLOW_INTERNET" || return 1
+    log "Defining provisioning network '$PROVISION_NETWORK' (NAT)..."
+    define_network "$PROVISION_NETWORK" "virbr-yemuprov" "192.168.101" "1" || return 1
+}
+
+# Move the VM from the provisioning network to the isolated analysis network
+switch_to_analysis_network() {
+    local vm_name="$1"
+    log "Shutting down '$vm_name' to move it onto '$NETWORK_NAME'..."
+    virsh shutdown "$vm_name" &>/dev/null || true
+    local waited=0
+    while [[ "$(virsh domstate "$vm_name" 2>/dev/null)" != "shut off" ]]; do
+        if (( waited >= 120 )); then
+            warn "Graceful shutdown timed out, forcing off."
+            virsh destroy "$vm_name" &>/dev/null || true
+            break
+        fi
+        sleep 2
+        (( waited += 2 ))
+    done
+
+    virsh dumpxml --inactive "$vm_name" \
+        | sed "s/network='$PROVISION_NETWORK'/network='$NETWORK_NAME'/" \
+        | virsh define /dev/stdin >/dev/null || return 1
+    virsh start "$vm_name" >/dev/null || return 1
 }
 
 download_file() {
@@ -168,7 +203,7 @@ create_cloud_init_iso() {
     local user_data="$tmpdir/user-data"
     local meta_data="$tmpdir/meta-data"
 
-    cat > "$user_data" << 'EOF'
+    cat > "$user_data" << EOF
 #cloud-config
 package_update: true
 package_upgrade: true
@@ -177,10 +212,10 @@ packages:
   - strace
   - tcpdump
   - curl
-password: analysis-password
+password: $GUEST_PASSWORD
 chpasswd:
   expire: false
-ssh_pwauth: true
+ssh_pwauth: false
 runcmd:
   - [systemctl, enable, --now, qemu-guest-agent]
 EOF
@@ -249,6 +284,7 @@ wait_for_guest_agent() {
 get_libvirt_xml() {
     local vm_name="$1" ram="$2" cpu="$3" disk_path="$4"
     local iso_path="${5:-}" cloud_init="${6:-}" virtio_win="${7:-}" windows_auto="${8:-}"
+    local network="${9:-$NETWORK_NAME}"
 
     local devices_xml=""
     devices_xml+="
@@ -275,7 +311,7 @@ get_libvirt_xml() {
               <target dev='$dev' bus='sata'/>
               <readonly/>
             </disk>"
-        (( idx++ ))
+        (( idx += 1 ))
     done
 
     cat << XMLEOF
@@ -295,7 +331,7 @@ get_libvirt_xml() {
   <devices>
     $devices_xml
     <interface type='network'>
-      <source network='$NETWORK_NAME'/>
+      <source network='$network'/>
       <model type='virtio'/>
     </interface>
     <channel type='unix'>
@@ -323,6 +359,11 @@ main() {
 
     mkdir -p "$DATA_DIR"
     chmod 755 "$DATA_DIR"
+
+    GUEST_PASSWORD="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 16)"
+    local cred_file="$DATA_DIR/$VM_NAME.credentials"
+    ( umask 077; printf 'user: default cloud user (ubuntu/debian)\npassword: %s\n' "$GUEST_PASSWORD" > "$cred_file" )
+    log "Guest console password written to $cred_file"
 
     echo -e "\n${GREEN}Configuration:${NC}"
     echo "  VM Name:      $VM_NAME"
@@ -407,7 +448,8 @@ main() {
             "$([[ $DISTRO == windows ]] && echo "$IMAGE_PATH")" \
             "$CLOUD_INIT_PATH" \
             "$VIRTIO_WIN_PATH" \
-            "$WINDOWS_AUTO_PATH")
+            "$WINDOWS_AUTO_PATH" \
+            "$PROVISION_NETWORK")
 
         virsh define /dev/stdin <<<"$xml" || { error "Failed to define VM."; exit 1; }
         echo "60"
@@ -429,6 +471,11 @@ main() {
                 '{"execute":"guest-exec","arguments":{"path":"/bin/sh","arg":["-c","apt-get update && apt-get install -y strace tcpdump"],"capture-output":true}}' \
                 &>/dev/null || true
         fi
+        echo "85"
+
+        echo "# Moving VM onto the isolated analysis network..."
+        switch_to_analysis_network "$VM_NAME" || { error "Failed to switch network."; exit 1; }
+        wait_for_guest_agent "$VM_NAME" 300 || { error "Guest agent timeout after network switch."; exit 1; }
         echo "90"
 
         # Phase 8: Snapshot
@@ -449,7 +496,7 @@ main() {
     if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
         log "VM Preparation COMPLETED SUCCESSFULLY!"
         zenity --info --title="VM Preparation" \
-            --text="VM '$VM_NAME' is ready.\n\nBaseline snapshot 'clean-baseline' created." \
+            --text="VM '$VM_NAME' is ready on isolated network '$NETWORK_NAME'.\n\nBaseline snapshot 'clean-baseline' created.\nConsole password: $DATA_DIR/$VM_NAME.credentials" \
             2>/dev/null || true
     else
         error "Preparation failed."
