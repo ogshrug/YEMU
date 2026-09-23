@@ -33,6 +33,7 @@ def _fake_get(archive, requested):
             resp.iter_content.return_value = [archive]
             resp.raise_for_status.return_value = None
         return resp
+
     return get
 
 
@@ -43,11 +44,13 @@ def rules_dir(tmp_path):
 
 def test_sync_pins_commit_validates_and_replaces(rules_dir, monkeypatch):
     requested = []
-    archive = _zip({
-        "rules-abc/malware/good.yar": "rule good { condition: true }",
-        "rules-abc/broken.yar": "rule broken { condition: nope }",
-        "rules-abc/readme.txt": "not a rule",
-    })
+    archive = _zip(
+        {
+            "rules-abc/malware/good.yar": "rule good { condition: true }",
+            "rules-abc/broken.yar": "rule broken { condition: nope }",
+            "rules-abc/readme.txt": "not a rule",
+        }
+    )
     monkeypatch.setattr(yara_sync.requests, "get", _fake_get(archive, requested))
     sync = YaraRuleSync(rules_dir=rules_dir)
 
@@ -68,18 +71,21 @@ def test_sync_pins_commit_validates_and_replaces(rules_dir, monkeypatch):
 
 def test_pinned_ref_skips_resolution(rules_dir, monkeypatch):
     requested = []
-    monkeypatch.setattr(yara_sync.requests, "get",
-                        _fake_get(_zip({"r-v1/x.yar": "rule x { condition: true }"}), requested))
+    monkeypatch.setattr(
+        yara_sync.requests, "get", _fake_get(_zip({"r-v1/x.yar": "rule x { condition: true }"}), requested)
+    )
     manifest = YaraRuleSync(rules_dir=rules_dir, ref="v1.2").sync()
     assert manifest["pinned"] and manifest["commit"] == "v1.2"
     assert not any("api.github.com" in u for u in requested)
 
 
 def test_zip_slip_entries_are_rejected(rules_dir, monkeypatch):
-    archive = _zip({
-        "r-x/../../evil.yar": "rule evil { condition: true }",
-        "r-x/ok.yar": "rule ok { condition: true }",
-    })
+    archive = _zip(
+        {
+            "r-x/../../evil.yar": "rule evil { condition: true }",
+            "r-x/ok.yar": "rule ok { condition: true }",
+        }
+    )
     monkeypatch.setattr(yara_sync.requests, "get", _fake_get(archive, []))
     manifest = YaraRuleSync(rules_dir=rules_dir).sync()
     assert manifest["file_count"] == 1

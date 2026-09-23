@@ -1,4 +1,5 @@
 """Locating QEMU binaries and picking an accelerator on Linux and Windows."""
+
 import os
 import shutil
 import subprocess

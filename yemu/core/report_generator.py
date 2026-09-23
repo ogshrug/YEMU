@@ -3,12 +3,13 @@ import logging
 from xml.sax.saxutils import escape
 
 try:
-    from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 except ImportError:
     letter = None
+
 
 class PDFGenerator:
     def __init__(self, output_path):
@@ -42,18 +43,22 @@ class PDFGenerator:
             ["MD5", escape(str(details.get('md5') or ""))],
             ["Size", f"{details.get('size_bytes', 0)} bytes"],
             ["Started At", escape(str(details.get('started_at') or ""))],
-            ["Finished At", escape(str(details.get('finished_at') or ""))]
+            ["Finished At", escape(str(details.get('finished_at') or ""))],
         ]
         t = Table(summary_data, colWidths=[100, 350])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
+        t.setStyle(
+            TableStyle(
+                [
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ]
+            )
+        )
         elements.append(t)
         elements.append(Spacer(1, 24))
 
@@ -94,13 +99,13 @@ class PDFGenerator:
                     strings = match.get('strings', [])
                     if strings:
                         elements.append(Paragraph("  Matched Strings:", self.styles['Normal']))
-                        for s in strings[:10]: # Limit to top 10 strings
+                        for s in strings[:10]:  # Limit to top 10 strings
                             s_id = escape(str(s.get('identifier', '')))
                             s_data = escape(str(s.get('data', '')))
                             s_offset = escape(str(s.get('offset', '')))
                             elements.append(Paragraph(f"    {s_offset}:{s_id}: {s_data}", self.styles['Normal']))
                         if len(strings) > 10:
-                            elements.append(Paragraph(f"    ... and {len(strings)-10} more", self.styles['Normal']))
+                            elements.append(Paragraph(f"    ... and {len(strings) - 10} more", self.styles['Normal']))
                 else:
                     elements.append(Paragraph(f"• {escape(str(match))}", self.styles['Normal']))
                 elements.append(Spacer(1, 6))
@@ -132,12 +137,16 @@ class PDFGenerator:
             event_data.append([str(ts), ev_type, Paragraph(escape(desc), self.styles['Normal'])])
 
         et = Table(event_data, colWidths=[60, 60, 330])
-        et.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP')
-        ]))
+        et.setStyle(
+            TableStyle(
+                [
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ]
+            )
+        )
         elements.append(et)
 
         try:

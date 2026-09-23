@@ -33,12 +33,14 @@ class AsyncRunner:
         """
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         if on_done:
+
             def _done(fut):
                 try:
                     on_done(fut.result(), None)
                 except Exception as e:
                     self.logger.error(f"Background task failed: {e}")
                     on_done(None, e)
+
             future.add_done_callback(_done)
         return future
 

@@ -1,9 +1,11 @@
-import asyncio
-import pytest
-from yemu.core.threat_scorer import ThreatScorer
-from yemu.core.yara_engine import YaraEngine
 import os
 import shutil
+
+import pytest
+
+from yemu.core.threat_scorer import ThreatScorer
+from yemu.core.yara_engine import YaraEngine
+
 
 def test_threat_scorer():
     scorer = ThreatScorer()
@@ -20,6 +22,7 @@ def test_threat_scorer():
     assert scorer.get_verdict(score2) == "malicious"
 
     print("ThreatScorer tests passed!")
+
 
 def test_yara_engine():
     # Create a temporary rules directory
@@ -41,6 +44,7 @@ def test_yara_engine():
     shutil.rmtree("test_rules")
     print("YaraEngine tests passed!")
 
+
 import sys
 from unittest.mock import MagicMock
 
@@ -51,6 +55,7 @@ if 'gi' not in sys.modules:
     sys.modules['gi'] = MagicMock()
     sys.modules['gi.repository'] = MagicMock()
 
+
 @pytest.mark.asyncio
 async def test_analysis_pipeline_resilience():
     from yemu.core.orchestrator import Orchestrator
@@ -59,25 +64,45 @@ async def test_analysis_pipeline_resilience():
     class FailingVMManager:
         def __init__(self, ui_callback=None):
             self.ui_callback = ui_callback
-        async def verify_environment(self, *args, **kwargs): return True, "OK"
-        async def revert_to_snapshot(self, *args, **kwargs): raise RuntimeError("Snapshot error")
-        async def start_vm(self, *args, **kwargs): raise RuntimeError("Start error")
-        async def inject_file(self, *args, **kwargs): raise RuntimeError("Inject error")
-        async def run_command(self, *args, **kwargs): raise RuntimeError("Command error")
-        async def stop_vm(self, *args, **kwargs): raise RuntimeError("Stop error")
-        async def wait_for_guest_agent(self, *args, **kwargs): raise RuntimeError("Agent error")
-        def list_vms(self): return ["test-vm"]
-        def list_snapshots(self, vm): return ["test-snap"]
+
+        async def verify_environment(self, *args, **kwargs):
+            return True, "OK"
+
+        async def revert_to_snapshot(self, *args, **kwargs):
+            raise RuntimeError("Snapshot error")
+
+        async def start_vm(self, *args, **kwargs):
+            raise RuntimeError("Start error")
+
+        async def inject_file(self, *args, **kwargs):
+            raise RuntimeError("Inject error")
+
+        async def run_command(self, *args, **kwargs):
+            raise RuntimeError("Command error")
+
+        async def stop_vm(self, *args, **kwargs):
+            raise RuntimeError("Stop error")
+
+        async def wait_for_guest_agent(self, *args, **kwargs):
+            raise RuntimeError("Agent error")
+
+        def list_vms(self):
+            return ["test-vm"]
+
+        def list_snapshots(self, vm):
+            return ["test-snap"]
 
     # Setup temp DB
     db_path = "test_resilience.db"
-    if os.path.exists(db_path): os.remove(db_path)
+    if os.path.exists(db_path):
+        os.remove(db_path)
     db = Database(db_path)
     await db.connect()
 
     # Create dummy sample
     sample_path = "test_sample.bin"
-    with open(sample_path, "wb") as f: f.write(b"dummy")
+    with open(sample_path, "wb") as f:
+        f.write(b"dummy")
 
     vm_manager = FailingVMManager()
     orchestrator = Orchestrator(db, vm_manager=vm_manager)
@@ -93,10 +118,14 @@ async def test_analysis_pipeline_resilience():
         assert details['filename'] == "test_sample.bin"
     finally:
         await db.close()
-        if os.path.exists(db_path): os.remove(db_path)
-        if os.path.exists(sample_path): os.remove(sample_path)
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        if os.path.exists(sample_path):
+            os.remove(sample_path)
+
 
 import pytest
+
 if __name__ == "__main__":
     test_threat_scorer()
     test_yara_engine()

@@ -2,6 +2,7 @@
 Turns the raw DB rows of an analysis into one normalized report structure,
 shared by the GUI, the CLI and the PDF export.
 """
+
 import json
 from collections import Counter
 
@@ -53,16 +54,18 @@ def build_report(details, events):
         if not isinstance(det, dict):
             det = {"value": det}
         etype = ev.get("event_type", "unknown")
-        parsed.append({
-            "id": ev.get("id"),
-            "type": etype,
-            "severity": ev.get("severity", "INFO"),
-            "timestamp": ev.get("timestamp") or 0,
-            "pid": det.get("pid", ""),
-            "process": det.get("process_name", ""),
-            "description": describe_event(etype, det),
-            "details": det,
-        })
+        parsed.append(
+            {
+                "id": ev.get("id"),
+                "type": etype,
+                "severity": ev.get("severity", "INFO"),
+                "timestamp": ev.get("timestamp") or 0,
+                "pid": det.get("pid", ""),
+                "process": det.get("process_name", ""),
+                "description": describe_event(etype, det),
+                "details": det,
+            }
+        )
 
     behaviour = [e for e in parsed if e["type"] in ("process", "file", "network")]
     iocs = []
@@ -83,8 +86,14 @@ def build_report(details, events):
     for e in parsed:
         det = e["details"]
         if e["type"] == "process" and det.get("action") == "execute":
-            processes.append({"pid": det.get("pid", ""), "ppid": det.get("ppid", ""),
-                              "name": det.get("process_name", ""), "cmdline": det.get("cmdline", "")})
+            processes.append(
+                {
+                    "pid": det.get("pid", ""),
+                    "ppid": det.get("ppid", ""),
+                    "name": det.get("process_name", ""),
+                    "cmdline": det.get("cmdline", ""),
+                }
+            )
 
     return {
         "id": details.get("id"),

@@ -1,7 +1,18 @@
+from typing import Any
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from yemu import __version__
 from yemu.gui import theme
@@ -12,12 +23,18 @@ from yemu.gui.pages.rules import RulesPage
 from yemu.gui.pages.settings import SettingsPage
 from yemu.gui.pages.vms import VMsPage
 
-NAV = [("analyze", "Analyze"), ("history", "History"), ("vms", "VMs"), ("rules", "YARA rules"), ("settings", "Settings")]
+NAV = [
+    ("analyze", "Analyze"),
+    ("history", "History"),
+    ("vms", "VMs"),
+    ("rules", "YARA rules"),
+    ("settings", "Settings"),
+]
 
 
 def _nav_icon(name, colors):
     ic = QIcon()
-    for mode, color in ((QIcon.Normal, colors["sidebar_text"]), (QIcon.Selected, "#ffffff")):
+    for mode, color in ((QIcon.Mode.Normal, colors["sidebar_text"]), (QIcon.Mode.Selected, "#ffffff")):
         ic.addPixmap(theme.icon(name, color, 18).pixmap(QSize(18, 18)), mode)
     return ic
 
@@ -62,10 +79,10 @@ class MainWindow(QMainWindow):
         self.nav = QListWidget()
         self.nav.setObjectName("Nav")
         self.nav.setIconSize(QSize(18, 18))
-        self.nav.setFocusPolicy(Qt.NoFocus)
+        self.nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         for key, text in NAV:
             item = QListWidgetItem(_nav_icon(key, self.colors), f"  {text}")
-            item.setData(Qt.UserRole, key)
+            item.setData(Qt.ItemDataRole.UserRole, key)
             item.setSizeHint(QSize(0, 40))
             self.nav.addItem(item)
         sl.addWidget(self.nav, 1)
@@ -78,7 +95,7 @@ class MainWindow(QMainWindow):
         # pages
         self.stack = QStackedWidget()
         row.addWidget(self.stack, 1)
-        self.pages = {
+        self.pages: dict[str, Any] = {
             "analyze": AnalyzePage(ctx),
             "history": HistoryPage(ctx),
             "vms": VMsPage(ctx),
@@ -100,12 +117,18 @@ class MainWindow(QMainWindow):
         ctx.config_changed.connect(self._apply_theme)
         ctx.log.message.connect(self._on_log)
 
-        QShortcut(QKeySequence.Open, self, activated=lambda: (self.show_page("analyze"), self.pages["analyze"].browse()))
+        QShortcut(QKeySequence.StandardKey.Open, self).activated.connect(
+            lambda: (self.show_page("analyze"), self.pages["analyze"].browse())
+        )
         for i in range(len(NAV)):
-            QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self, activated=lambda i=i: self.nav.setCurrentRow(i))
+            QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self).activated.connect(lambda i=i: self.nav.setCurrentRow(i))
 
         self.nav.setCurrentRow(0)
         self._update_status()
+
+    def _open_sample(self):
+        self.show_page("analyze")
+        self.pages["analyze"].browse()
 
     def show_page(self, key):
         self.stack.setCurrentWidget(self.pages[key])
@@ -130,6 +153,7 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self):
         from PySide6.QtWidgets import QApplication
+
         self.colors = theme.apply(QApplication.instance(), self.ctx.config["ui"]["theme"])
         for i, (key, _) in enumerate(NAV):
             self.nav.item(i).setIcon(_nav_icon(key, self.colors))
@@ -139,8 +163,13 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(msg, 8000)
 
     def closeEvent(self, event):
-        if self.ctx.analysis_running and QMessageBox.question(
-                self, "Analysis running", "An analysis is still running. Quit anyway? The VM will be left running.") != QMessageBox.Yes:
+        if (
+            self.ctx.analysis_running
+            and QMessageBox.question(
+                self, "Analysis running", "An analysis is still running. Quit anyway? The VM will be left running."
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
             event.ignore()
             return
         self.ctx.shutdown()

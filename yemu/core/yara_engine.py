@@ -1,9 +1,10 @@
-import os
-from pathlib import Path
-import logging
-import concurrent.futures
 import asyncio
+import concurrent.futures
+import logging
+import os
 import re
+from pathlib import Path
+from typing import Any
 
 try:
     import yara
@@ -14,6 +15,7 @@ from yemu import paths
 
 # Rules shipped with the package; always loaded so a fresh install is never rule-less
 BUILTIN_RULES = paths.BUILTIN_RULES_FILE
+
 
 class YaraEngine:
     def __init__(self, rules_dir=None, builtin_rules=BUILTIN_RULES):
@@ -92,12 +94,9 @@ class YaraEngine:
                     hex_data = hex_data[:191] + "..."
                     printable = printable[:64] + "..."
 
-                formatted_strings.append({
-                    "offset": hex(offset),
-                    "identifier": identifier,
-                    "data": hex_data,
-                    "printable": printable
-                })
+                formatted_strings.append(
+                    {"offset": hex(offset), "identifier": identifier, "data": hex_data, "printable": printable}
+                )
 
         return {
             "rule": match.rule,
@@ -108,11 +107,11 @@ class YaraEngine:
             "process_name": "unknown",
             "exe_path": "[unreadable]",
             "cmdline": "[unreadable]",
-            "path": "[unreadable]"
+            "path": "[unreadable]",
         }
 
     def scan_file(self, filepath):
-        results = []
+        results: list[dict] = []
         if not self.rules:
             self.logger.error("No YARA rules loaded for scan_file")
             return results
@@ -135,7 +134,7 @@ class YaraEngine:
         return await loop.run_in_executor(self._thread_pool, self.scan_file, filepath)
 
     def scan_memory(self, dump_path):
-        results = []
+        results: list[dict] = []
         if not self.rules:
             self.logger.error("No YARA rules loaded for scan_memory")
             return results
@@ -170,8 +169,8 @@ class YaraEngine:
             rule_name [author="x",description="y"] 1234
             rule_name /proc/1234/mem
         """
-        matches = []
-        current_match = None
+        matches: list[dict[str, Any]] = []
+        current_match: dict[str, Any] | None = None
         for line in output.splitlines():
             line = line.strip()
             if not line or line == "TIMEOUT":
@@ -180,8 +179,9 @@ class YaraEngine:
             string_match = re.match(r'^(0x[0-9a-fA-F]+):(\$[^{}\s:]*):\s*(.*)$', line)
             if string_match and current_match:
                 offset, identifier, data = string_match.groups()
-                current_match["strings"].append({"offset": offset, "identifier": identifier,
-                                                 "data": data, "printable": data[:64]})
+                current_match["strings"].append(
+                    {"offset": offset, "identifier": identifier, "data": data, "printable": data[:64]}
+                )
                 continue
 
             header = self.HEADER.match(line)

@@ -1,15 +1,19 @@
-import aiosqlite
 import json
 import logging
 from datetime import datetime
+
+import aiosqlite
+
 from yemu import paths
 
 SCHEMA_VERSION = 2
 
 # (version, statements). Never edit a released migration; append a new one.
 MIGRATIONS = [
-    (1, [
-        """CREATE TABLE IF NOT EXISTS samples (
+    (
+        1,
+        [
+            """CREATE TABLE IF NOT EXISTS samples (
               id INTEGER PRIMARY KEY,
               sha256 TEXT UNIQUE,
               md5 TEXT,
@@ -18,7 +22,7 @@ MIGRATIONS = [
               size_bytes INTEGER,
               first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )""",
-        """CREATE TABLE IF NOT EXISTS analyses (
+            """CREATE TABLE IF NOT EXISTS analyses (
               id INTEGER PRIMARY KEY,
               sample_id INTEGER REFERENCES samples(id),
               started_at TIMESTAMP,
@@ -28,7 +32,7 @@ MIGRATIONS = [
               yara_matches TEXT,
               report_json TEXT
             )""",
-        """CREATE TABLE IF NOT EXISTS events (
+            """CREATE TABLE IF NOT EXISTS events (
               id INTEGER PRIMARY KEY,
               analysis_id INTEGER REFERENCES analyses(id),
               event_type TEXT,
@@ -36,24 +40,28 @@ MIGRATIONS = [
               severity TEXT,
               details TEXT
             )""",
-        """CREATE TABLE IF NOT EXISTS iocs (
+            """CREATE TABLE IF NOT EXISTS iocs (
               id INTEGER PRIMARY KEY,
               analysis_id INTEGER REFERENCES analyses(id),
               ioc_type TEXT,
               value TEXT,
               confidence INTEGER
             )""",
-    ]),
-    (2, [
-        "ALTER TABLE analyses ADD COLUMN status TEXT",
-        "ALTER TABLE analyses ADD COLUMN error TEXT",
-        "ALTER TABLE analyses ADD COLUMN guest_os TEXT",
-        "ALTER TABLE analyses ADD COLUMN snapshot TEXT",
-        "ALTER TABLE analyses ADD COLUMN scoring TEXT",
-        "UPDATE analyses SET status = CASE WHEN finished_at IS NULL THEN 'interrupted' ELSE 'completed' END",
-        "CREATE INDEX IF NOT EXISTS idx_events_analysis ON events(analysis_id)",
-        "CREATE INDEX IF NOT EXISTS idx_analyses_started ON analyses(started_at)",
-    ]),
+        ],
+    ),
+    (
+        2,
+        [
+            "ALTER TABLE analyses ADD COLUMN status TEXT",
+            "ALTER TABLE analyses ADD COLUMN error TEXT",
+            "ALTER TABLE analyses ADD COLUMN guest_os TEXT",
+            "ALTER TABLE analyses ADD COLUMN snapshot TEXT",
+            "ALTER TABLE analyses ADD COLUMN scoring TEXT",
+            "UPDATE analyses SET status = CASE WHEN finished_at IS NULL THEN 'interrupted' ELSE 'completed' END",
+            "CREATE INDEX IF NOT EXISTS idx_events_analysis ON events(analysis_id)",
+            "CREATE INDEX IF NOT EXISTS idx_analyses_started ON analyses(started_at)",
+        ],
+    ),
 ]
 
 
@@ -81,6 +89,7 @@ class Database:
 
     async def _migrate(self):
         """Apply MIGRATIONS newer than PRAGMA user_version, each in its own transaction."""
+        assert self.conn is not None
         version = await self.schema_version()
         for target, statements in MIGRATIONS:
             if target <= version:
@@ -96,15 +105,17 @@ class Database:
                 raise
 
     async def schema_version(self):
+        assert self.conn is not None
         async with self.conn.execute("PRAGMA user_version") as cur:
             return (await cur.fetchone())[0]
 
     async def add_sample(self, sha256, md5, filename, file_type, size_bytes):
-        if not self.conn: return None
+        if not self.conn:
+            return None
         try:
             async with self.conn.execute(
                 "INSERT OR IGNORE INTO samples (sha256, md5, filename, file_type, size_bytes) VALUES (?, ?, ?, ?, ?)",
-                (sha256, md5, filename, file_type, size_bytes)
+                (sha256, md5, filename, file_type, size_bytes),
             ) as cursor:
                 await self.conn.commit()
                 if cursor.rowcount > 0:
@@ -118,11 +129,13 @@ class Database:
             return None
 
     async def create_analysis(self, sample_id, started_at, guest_os=None, snapshot=None):
-        if not self.conn: return None
+        if not self.conn:
+            return None
         try:
             async with self.conn.execute(
-                "INSERT INTO analyses (sample_id, started_at, status, guest_os, snapshot) VALUES (?, ?, 'running', ?, ?)",
-                (sample_id, _ts(started_at), guest_os, snapshot)
+                "INSERT INTO analyses (sample_id, started_at, status, guest_os, snapshot) "
+                "VALUES (?, ?, 'running', ?, ?)",
+                (sample_id, _ts(started_at), guest_os, snapshot),
             ) as cursor:
                 await self.conn.commit()
                 return cursor.lastrowid
@@ -130,9 +143,20 @@ class Database:
             self.logger.error(f"Failed to create analysis: {e}")
             return None
 
-    async def update_analysis(self, analysis_id, finished_at=None, threat_score=None, verdict=None, yara_matches=None,
-                              report_json=None, status=None, error=None, scoring=None):
-        if not self.conn or not analysis_id: return
+    async def update_analysis(
+        self,
+        analysis_id,
+        finished_at=None,
+        threat_score=None,
+        verdict=None,
+        yara_matches=None,
+        report_json=None,
+        status=None,
+        error=None,
+        scoring=None,
+    ):
+        if not self.conn or not analysis_id:
+            return
         try:
             fields = {
                 "finished_at": _ts(finished_at) if finished_at is not None else None,
@@ -158,25 +182,31 @@ class Database:
 
     async def add_events(self, analysis_id, rows):
         """Bulk insert [(event_type, timestamp, severity, details), ...] in one transaction."""
-        if not self.conn or not analysis_id or not rows: return
+        if not self.conn or not analysis_id or not rows:
+            return
         try:
             await self.conn.executemany(
                 "INSERT INTO events (analysis_id, event_type, timestamp, severity, details) VALUES (?, ?, ?, ?, ?)",
-                [(analysis_id, t, ts, sev, json.dumps(d)) for t, ts, sev, d in rows])
+                [(analysis_id, t, ts, sev, json.dumps(d)) for t, ts, sev, d in rows],
+            )
             await self.conn.commit()
         except Exception as e:
             self.logger.error(f"Failed to add events: {e}")
 
     async def get_recent_analyses(self, limit=50):
-        if not self.conn: return []
+        if not self.conn:
+            return []
         try:
-            async with self.conn.execute("""
+            async with self.conn.execute(
+                """
                 SELECT a.id, s.filename, a.started_at, a.verdict, a.threat_score, a.status
                 FROM analyses a
                 JOIN samples s ON a.sample_id = s.id
                 ORDER BY a.started_at DESC
                 LIMIT ?
-            """, (limit,)) as cursor:
+            """,
+                (limit,),
+            ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:
@@ -184,14 +214,18 @@ class Database:
             return []
 
     async def get_analysis_details(self, analysis_id):
-        if not self.conn or not analysis_id: return None
+        if not self.conn or not analysis_id:
+            return None
         try:
-            async with self.conn.execute("""
+            async with self.conn.execute(
+                """
                 SELECT a.*, s.filename, s.sha256, s.md5, s.size_bytes, s.file_type
                 FROM analyses a
                 JOIN samples s ON a.sample_id = s.id
                 WHERE a.id = ?
-            """, (analysis_id,)) as cursor:
+            """,
+                (analysis_id,),
+            ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
         except Exception as e:
@@ -199,11 +233,15 @@ class Database:
             return None
 
     async def get_analysis_events(self, analysis_id):
-        if not self.conn or not analysis_id: return []
+        if not self.conn or not analysis_id:
+            return []
         try:
-            async with self.conn.execute("""
+            async with self.conn.execute(
+                """
                 SELECT * FROM events WHERE analysis_id = ? ORDER BY timestamp ASC, id ASC
-            """, (analysis_id,)) as cursor:
+            """,
+                (analysis_id,),
+            ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
         except Exception as e:

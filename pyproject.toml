@@ -62,3 +62,34 @@ yemu = ["rules/*.yar"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "strict"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["scripts", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP"]
+ignore = [
+    "E701",  # `if x: return` one-liners are used deliberately in guard clauses
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]   # tests set env vars / mocks before importing the code under test
+"yemu/rules/*" = ["ALL"]
+"yemu/gui/theme.py" = ["E501"]           # SVG path data and the stylesheet
+"yemu/core/vm_provisioner.py" = ["E501"] # embedded Windows answer-file XML
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["yemu"]
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[tool.ruff.format]
+quote-style = "preserve"

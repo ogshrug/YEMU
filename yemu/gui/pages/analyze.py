@@ -2,18 +2,40 @@ import hashlib
 import os
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QProgressBar,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QGridLayout,
+    QHBoxLayout,
+    QProgressBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 from yemu.core.orchestrator import Orchestrator
-from yemu.gui import theme
-from yemu.gui.widgets import (DropZone, LogView, ScoreGauge, StageTracker, VerdictBadge, button, card,
-                              human_size, label, page_header)
+from yemu.gui.widgets import (
+    DropZone,
+    LogView,
+    ScoreGauge,
+    StageTracker,
+    VerdictBadge,
+    button,
+    card,
+    human_size,
+    label,
+    page_header,
+)
 
 # (key, title, message prefixes that start the stage)
 STAGES = [
     ("static", "Static YARA scan", ("Running YARA static analysis",)),
-    ("prepare", "Revert and boot VM", ("Verifying VM environment", "Reverting VM", "Starting VM", "Waiting for guest agent")),
+    (
+        "prepare",
+        "Revert and boot VM",
+        ("Verifying VM environment", "Reverting VM", "Starting VM", "Waiting for guest agent"),
+    ),
     ("inject", "Inject sample", ("Injecting sample",)),
     ("execute", "Execute under strace", ("Executing sample", "Starting packet capture")),
     ("memory", "In-guest memory scan", ("Running in-guest YARA memory scan",)),
@@ -47,8 +69,12 @@ class AnalyzePage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(16)
-        root.addLayout(page_header("Analyze a sample",
-                                   "Detonate a file inside an isolated VM, then review its behaviour, YARA hits and verdict."))
+        root.addLayout(
+            page_header(
+                "Analyze a sample",
+                "Detonate a file inside an isolated VM, then review its behaviour, YARA hits and verdict.",
+            )
+        )
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(16)
@@ -75,7 +101,7 @@ class AnalyzePage(QWidget):
         opts, ol = card()
         ol.addWidget(label("Environment", "SectionTitle"))
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignLeft)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setHorizontalSpacing(16)
         self.vm_combo = QComboBox()
         self.vm_combo.currentTextChanged.connect(self._load_snapshots)
@@ -142,7 +168,7 @@ class AnalyzePage(QWidget):
         rl.addLayout(info, 1)
         self.open_btn = button("Open report", "file", "Primary")
         self.open_btn.clicked.connect(lambda: self.last_analysis_id and self.open_report.emit(self.last_analysis_id))
-        rl.addWidget(self.open_btn, 0, Qt.AlignVCenter)
+        rl.addWidget(self.open_btn, 0, Qt.AlignmentFlag.AlignVCenter)
         self.result_card.hide()
         right.addWidget(self.result_card)
 
@@ -186,11 +212,19 @@ class AnalyzePage(QWidget):
     # --- VMs ---
     def refresh_vms(self):
         backend = self.ctx.backend
-        self.backend_note.setText(f"Backend: {self.ctx.backend_label()}" +
-                                  ("  ·  Mock mode returns canned results. Configure a real backend in Settings."
-                                   if backend.name == "mock" else ""))
-        self.ctx.bridge.call_sync(backend.list_vms, on_result=self._set_vms,
-                                  on_error=lambda e: self.ctx.log(f"Could not list VMs: {e}", "WARN"))
+        self.backend_note.setText(
+            f"Backend: {self.ctx.backend_label()}"
+            + (
+                "  ·  Mock mode returns canned results. Configure a real backend in Settings."
+                if backend.name == "mock"
+                else ""
+            )
+        )
+        self.ctx.bridge.call_sync(
+            backend.list_vms,
+            on_result=self._set_vms,
+            on_error=lambda e: self.ctx.log(f"Could not list VMs: {e}", "WARN"),
+        )
 
     def _set_vms(self, vms):
         current = self.vm_combo.currentText() or self.ctx.config["vm"]["default_vm"]
@@ -221,8 +255,12 @@ class AnalyzePage(QWidget):
         self._update_start()
 
     def _update_start(self):
-        ok = bool(self.sample_path and self.vm_combo.currentText() and self.snap_combo.currentText()
-                  and not self.ctx.analysis_running)
+        ok = bool(
+            self.sample_path
+            and self.vm_combo.currentText()
+            and self.snap_combo.currentText()
+            and not self.ctx.analysis_running
+        )
         self.start_btn.setEnabled(ok)
         if self.ctx.analysis_running:
             self.start_btn.setText("Analysis running...")
@@ -246,9 +284,13 @@ class AnalyzePage(QWidget):
         self.status.setText("Running")
         self._update_start()
         orch = Orchestrator(self.ctx.db, vm_manager=self.ctx.backend, ui_callback=self.ctx.log, config=self.ctx.config)
-        coro = orch.run_analysis(self.sample_path, guest_os=self.vm_combo.currentText(),
-                                 snapshot_name=self.snap_combo.currentText(),
-                                 run_gui=self.interactive.isChecked(), run_pcap=self.pcap.isChecked())
+        coro = orch.run_analysis(
+            self.sample_path,
+            guest_os=self.vm_combo.currentText(),
+            snapshot_name=self.snap_combo.currentText(),
+            run_gui=self.interactive.isChecked(),
+            run_pcap=self.pcap.isChecked(),
+        )
         self.ctx.bridge.call(coro, self._finished, self._crashed)
 
     def _advance(self, key):
@@ -258,7 +300,7 @@ class AnalyzePage(QWidget):
         if self.current_stage:
             self.tracker.set_state(self.current_stage, "warn" if self.stage_had_warning else "done")
             # stages the pipeline jumped over were skipped
-            for k in order[order.index(self.current_stage) + 1:order.index(key)]:
+            for k in order[order.index(self.current_stage) + 1 : order.index(key)]:
                 if self.tracker.state(k) == "pending":
                     self.tracker.set_state(k, "skipped")
         self.current_stage = key
@@ -306,14 +348,19 @@ class AnalyzePage(QWidget):
             return
         verdict = details.get("verdict") or "unknown"
         run_status = details.get("status") or "completed"
-        self.status.setText(f"Done · {verdict}" if run_status == "completed" else f"{run_status.capitalize()} · {verdict}")
+        self.status.setText(
+            f"Done · {verdict}" if run_status == "completed" else f"{run_status.capitalize()} · {verdict}"
+        )
         self.gauge.set_score(details.get("threat_score") or 0, verdict)
         self.result_badge.set_verdict(verdict)
         self.result_title.setText(f"#{details['id']}  {details.get('filename')}")
         if run_status in ("failed", "timeout"):
-            self.result_meta.setText(f"Analysis {run_status}: {details.get('error') or 'see the log'}. "
-                                     "The verdict is based on partial results.")
+            self.result_meta.setText(
+                f"Analysis {run_status}: {details.get('error') or 'see the log'}. "
+                "The verdict is based on partial results."
+            )
         else:
-            self.result_meta.setText("Analysis complete. Open the report to see why it got this verdict, the process "
-                                     "tree and network IOCs.")
+            self.result_meta.setText(
+                "Analysis complete. Open the report to see why it got this verdict, the process tree and network IOCs."
+            )
         self.result_card.show()

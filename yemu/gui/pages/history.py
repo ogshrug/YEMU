@@ -1,6 +1,16 @@
 from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLineEdit, QStackedWidget, QTableView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLineEdit,
+    QStackedWidget,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
 
 from yemu.gui import theme
 from yemu.gui.widgets import EmptyState, StatCard, button, human_time, page_header
@@ -34,7 +44,9 @@ class HistoryPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(16)
-        root.addLayout(page_header("History", "Every analysis run on this machine. Double-click a row to open its report."))
+        root.addLayout(
+            page_header("History", "Every analysis run on this machine. Double-click a row to open its report.")
+        )
 
         stats = QHBoxLayout()
         stats.setSpacing(12)
@@ -50,7 +62,7 @@ class HistoryPage(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search by file name or ID")
         self.search.setClearButtonEnabled(True)
-        self.search.addAction(theme.icon("search", "#98a2b3", 16), QLineEdit.LeadingPosition)
+        self.search.addAction(theme.icon("search", "#98a2b3", 16), QLineEdit.ActionPosition.LeadingPosition)
         self.verdict = QComboBox()
         self.verdict.addItems(["All verdicts", "Malicious", "Suspicious", "Clean", "Manual", "Unknown"])
         refresh = button("Refresh", "refresh")
@@ -69,21 +81,23 @@ class HistoryPage(QWidget):
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setDefaultSectionSize(34)
         h = self.table.horizontalHeader()
-        h.setSectionResizeMode(1, QHeaderView.Stretch)
+        h.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for col, width in ((0, 60), (2, 120), (3, 70), (4, 110), (5, 170)):
-            h.setSectionResizeMode(col, QHeaderView.Fixed)
+            h.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.table.setColumnWidth(col, width)
         self.table.doubleClicked.connect(self._open)
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.table)
-        self.stack.addWidget(EmptyState("history", "No analyses yet", "Run one from the Analyze page and it will show up here."))
+        self.stack.addWidget(
+            EmptyState("history", "No analyses yet", "Run one from the Analyze page and it will show up here.")
+        )
         root.addWidget(self.stack, 1)
 
         self.search.textChanged.connect(self._filter)
@@ -108,9 +122,9 @@ class HistoryPage(QWidget):
             verdict = (r.get("verdict") or "unknown").lower()
             counts[verdict] = counts.get(verdict, 0) + 1
             id_item = QStandardItem()
-            id_item.setData(r["id"], Qt.DisplayRole)
+            id_item.setData(r["id"], Qt.ItemDataRole.DisplayRole)
             score = QStandardItem()
-            score.setData(r.get("threat_score") or 0, Qt.DisplayRole)
+            score.setData(r.get("threat_score") or 0, Qt.ItemDataRole.DisplayRole)
             v_item = QStandardItem(verdict.capitalize())
             v_item.setForeground(QColor(theme.VERDICT_COLORS.get(verdict, theme.VERDICT_COLORS["unknown"])))
             f = v_item.font()
@@ -120,9 +134,17 @@ class HistoryPage(QWidget):
             s_item = QStandardItem(status)
             if status in STATUS_COLORS:
                 s_item.setForeground(QColor(STATUS_COLORS[status]))
-            self.model.appendRow([id_item, QStandardItem(r.get("filename") or ""), v_item, score, s_item,
-                                  QStandardItem(human_time(r.get("started_at")))])
-        self.table.sortByColumn(0, Qt.DescendingOrder)
+            self.model.appendRow(
+                [
+                    id_item,
+                    QStandardItem(r.get("filename") or ""),
+                    v_item,
+                    score,
+                    s_item,
+                    QStandardItem(human_time(r.get("started_at"))),
+                ]
+            )
+        self.table.sortByColumn(0, Qt.SortOrder.DescendingOrder)
         self.stat_total.set_value(len(rows or []))
         self.stat_mal.set_value(counts["malicious"])
         self.stat_sus.set_value(counts["suspicious"])

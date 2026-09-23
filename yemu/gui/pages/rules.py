@@ -3,8 +3,19 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRegularExpression, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
-from PySide6.QtWidgets import (QHBoxLayout, QInputDialog, QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar,
-                               QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QInputDialog,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from yemu import paths
 from yemu.gui import theme
@@ -15,9 +26,11 @@ try:
 except ImportError:
     yara = None
 
-KEYWORDS = ("rule private global import include meta strings condition and or not all any of them for in at "
-            "filesize entrypoint true false nocase wide ascii fullword xor base64 base64wide matches contains "
-            "startswith endswith icontains iequals none defined").split()
+KEYWORDS = (
+    "rule private global import include meta strings condition and or not all any of them for in at "
+    "filesize entrypoint true false nocase wide ascii fullword xor base64 base64wide matches contains "
+    "startswith endswith icontains iequals none defined"
+).split()
 
 
 class YaraHighlighter(QSyntaxHighlighter):
@@ -28,13 +41,22 @@ class YaraHighlighter(QSyntaxHighlighter):
             f = QTextCharFormat()
             f.setForeground(QColor(color))
             if bold:
-                f.setFontWeight(QFont.Bold)
+                f.setFontWeight(QFont.Weight.Bold)
             f.setFontItalic(italic)
             return f
 
-        palette = ({"kw": "#c792ea", "str": "#c3e88d", "var": "#82aaff", "num": "#f78c6c", "cmt": "#6b7280", "hex": "#ffcb6b"}
-                   if dark else
-                   {"kw": "#7c3aed", "str": "#15803d", "var": "#1d4ed8", "num": "#c2410c", "cmt": "#6b7280", "hex": "#a16207"})
+        palette = (
+            {"kw": "#c792ea", "str": "#c3e88d", "var": "#82aaff", "num": "#f78c6c", "cmt": "#6b7280", "hex": "#ffcb6b"}
+            if dark
+            else {
+                "kw": "#7c3aed",
+                "str": "#15803d",
+                "var": "#1d4ed8",
+                "num": "#c2410c",
+                "cmt": "#6b7280",
+                "hex": "#a16207",
+            }
+        )
         self.rules = [
             (QRegularExpression(r"\b(" + "|".join(KEYWORDS) + r")\b"), fmt(palette["kw"], bold=True)),
             (QRegularExpression(r"[$#@!][A-Za-z0-9_*]*"), fmt(palette["var"])),
@@ -80,9 +102,12 @@ class RulesPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(16)
-        root.addLayout(page_header(
-            "YARA rules",
-            "Built-in rules always load. Your own rules and synced rule sets live in the YEMU data folder."))
+        root.addLayout(
+            page_header(
+                "YARA rules",
+                "Built-in rules always load. Your own rules and synced rule sets live in the YEMU data folder.",
+            )
+        )
 
         splitter = QSplitter()
         splitter.setChildrenCollapsible(False)
@@ -122,7 +147,7 @@ class RulesPage(QWidget):
         rl.addLayout(head)
         self.editor = QPlainTextEdit()
         self.editor.setObjectName("Code")
-        self.editor.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.editor.setTabStopDistance(28)
         self.highlighter = YaraHighlighter(self.editor.document(), theme.is_dark(ctx.config["ui"]["theme"]))
         self.editor.textChanged.connect(self._mark_dirty)
@@ -168,19 +193,23 @@ class RulesPage(QWidget):
             ("My rules", sorted(self._custom_dir().glob("*.yar*")), False, self._custom_dir()),
         ]
         synced_root = paths.synced_rules_dir()
-        synced = sorted(p for p in synced_root.rglob("*") if p.suffix in (".yar", ".yara")
-                        and self._custom_dir() not in p.parents
-                        and not any(part.startswith(".") for part in p.relative_to(synced_root).parts))
+        synced = sorted(
+            p
+            for p in synced_root.rglob("*")
+            if p.suffix in (".yar", ".yara")
+            and self._custom_dir() not in p.parents
+            and not any(part.startswith(".") for part in p.relative_to(synced_root).parts)
+        )
         groups.append((f"Synced ({len(synced)})", synced, False, synced_root))
         for title, files, ro, base in groups:
             top = QTreeWidgetItem([title])
             f = top.font(0)
             f.setBold(True)
             top.setFont(0, f)
-            top.setFlags(Qt.ItemIsEnabled)
+            top.setFlags(Qt.ItemFlag.ItemIsEnabled)
             for p in files:
                 child = QTreeWidgetItem([str(p.relative_to(base)) if base in p.parents else p.name])
-                child.setData(0, Qt.UserRole, (str(p), ro))
+                child.setData(0, Qt.ItemDataRole.UserRole, (str(p), ro))
                 child.setIcon(0, theme.icon("rules", "#98a2b3", 14))
                 top.addChild(child)
             self.tree.addTopLevelItem(top)
@@ -191,6 +220,8 @@ class RulesPage(QWidget):
         text = text.lower()
         for i in range(self.tree.topLevelItemCount()):
             top = self.tree.topLevelItem(i)
+            if top is None:
+                continue
             for j in range(top.childCount()):
                 child = top.child(j)
                 child.setHidden(bool(text) and text not in child.text(0).lower())
@@ -200,10 +231,13 @@ class RulesPage(QWidget):
     def _confirm_discard(self):
         if not self.dirty:
             return True
-        return QMessageBox.question(self, "Unsaved changes", "Discard unsaved changes to this rule?") == QMessageBox.Yes
+        return (
+            QMessageBox.question(self, "Unsaved changes", "Discard unsaved changes to this rule?")
+            == QMessageBox.StandardButton.Yes
+        )
 
     def _open_item(self, item):
-        data = item.data(0, Qt.UserRole)
+        data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data or not self._confirm_discard():
             return
         path, ro = Path(data[0]), data[1]
@@ -248,16 +282,20 @@ class RulesPage(QWidget):
         stem = re.sub(r"\W", "_", path.stem)
         path.write_text(
             f'rule {stem}\n{{\n    meta:\n        description = "Describe what this detects"\n'
-            f'    strings:\n        $a = "suspicious string" nocase\n    condition:\n        $a\n}}\n', encoding="utf-8")
+            f'    strings:\n        $a = "suspicious string" nocase\n    condition:\n        $a\n}}\n',
+            encoding="utf-8",
+        )
         self.refresh()
         self._select_path(path)
 
     def _select_path(self, path):
         for i in range(self.tree.topLevelItemCount()):
             top = self.tree.topLevelItem(i)
+            if top is None:
+                continue
             for j in range(top.childCount()):
                 child = top.child(j)
-                data = child.data(0, Qt.UserRole)
+                data = child.data(0, Qt.ItemDataRole.UserRole)
                 if data and Path(data[0]) == path:
                     self.tree.setCurrentItem(child)
                     self._open_item(child)
@@ -287,8 +325,15 @@ class RulesPage(QWidget):
         if not self.current or self.current[1]:
             return
         err = self._compile_error()
-        if err and QMessageBox.question(self, "Rule does not compile",
-                                        f"{err}\n\nSave anyway? Rules that fail to compile are skipped during analysis.") != QMessageBox.Yes:
+        if (
+            err
+            and QMessageBox.question(
+                self,
+                "Rule does not compile",
+                f"{err}\n\nSave anyway? Rules that fail to compile are skipped during analysis.",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
             return
         self.current[0].write_text(self.editor.toPlainText(), encoding="utf-8")
         self.dirty = False
@@ -299,13 +344,17 @@ class RulesPage(QWidget):
     # --- sync ---
     def _sync(self):
         from yemu.core.yara_sync import YaraRuleSync
+
         self.sync_btn.setEnabled(False)
         self.sync_bar.show()
         self.sync_bar.setValue(0)
         try:
-            sync = YaraRuleSync(repo_url=self.repo.text().strip(), branch=self.branch.text().strip() or "master",
-                                ref=self.ctx.config["rules"]["ref"],
-                                max_download_mb=self.ctx.config["rules"]["max_download_mb"])
+            sync = YaraRuleSync(
+                repo_url=self.repo.text().strip(),
+                branch=self.branch.text().strip() or "master",
+                ref=self.ctx.config["rules"]["ref"],
+                max_download_mb=self.ctx.config["rules"]["max_download_mb"],
+            )
         except Exception as e:
             self.sync_btn.setEnabled(True)
             self.sync_bar.hide()
@@ -316,8 +365,10 @@ class RulesPage(QWidget):
             self.sync_btn.setEnabled(True)
             self.sync_bar.hide()
             self.status.setStyleSheet("")
-            self.status.setText(f"Synced {manifest.get('file_count', 0)} rules at {str(manifest.get('commit', ''))[:12]}"
-                                f" ({len(manifest.get('skipped_files', []))} skipped)")
+            self.status.setText(
+                f"Synced {manifest.get('file_count', 0)} rules at {str(manifest.get('commit', ''))[:12]}"
+                f" ({len(manifest.get('skipped_files', []))} skipped)"
+            )
             self.refresh()
 
         def failed(e):

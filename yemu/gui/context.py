@@ -2,6 +2,7 @@
 Shared state for the Qt app, and the bridge between Qt's main thread and the
 single asyncio loop (AsyncRunner) where the DB, backends and orchestrator live.
 """
+
 import asyncio
 import logging
 
@@ -28,6 +29,7 @@ class Bridge(QObject):
     def call(self, coro, on_result=None, on_error=None):
         def finished(result, error):
             self._done.emit(on_result, on_error, result, error)
+
         return self.runner.submit(coro, on_done=finished)
 
     def call_sync(self, fn, *args, on_result=None, on_error=None):
@@ -78,8 +80,8 @@ class AppContext(QObject):
             self.db_ready = True
             if on_ready:
                 on_ready()
-        self.bridge.call(self.db.connect(), ready,
-                         lambda e: self.log(f"Database connection failed: {e}", "CRITICAL"))
+
+        self.bridge.call(self.db.connect(), ready, lambda e: self.log(f"Database connection failed: {e}", "CRITICAL"))
 
     def reload_config(self):
         self.config = yemu_config.load()

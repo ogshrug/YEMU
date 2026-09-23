@@ -1,20 +1,22 @@
-import requests
-import os
 import logging
-import yaml
-import tempfile
-import subprocess
-import shutil
+import os
 import secrets
+import shutil
+import subprocess
+import tempfile
+
+import requests
+import yaml
 
 from yemu import paths
+
 
 class VMProvisioner:
     DISTROS = {
         "ubuntu": "https://releases.ubuntu.com/24.04/ubuntu-24.04.1-live-server-amd64.iso",
         "mint": "https://mirrors.layeronline.com/linuxmint/stable/22/linuxmint-22-cinnamon-64bit.iso",
         "alpine": "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-virt-3.20.3-x86_64.iso",
-        "windows": "https://software-static.download.prss.microsoft.com/db_releases/Windows_11_Enterprise_Evaluation_Multi.iso"
+        "windows": "https://software-static.download.prss.microsoft.com/db_releases/Windows_11_Enterprise_Evaluation_Multi.iso",
     }
 
     CLOUD_IMAGES = {
@@ -115,8 +117,9 @@ class VMProvisioner:
             try:
                 import pycdlib
             except ImportError:
-                raise RuntimeError("No ISO tool found: install genisoimage (Linux) or `pip install pycdlib`")
+                raise RuntimeError("No ISO tool found: install genisoimage (Linux) or `pip install pycdlib`") from None
             import io
+
             iso = pycdlib.PyCdlib()
             iso.new(interchange_level=3, joliet=3, rock_ridge="1.09", vol_ident=volume_id)
             for idx, (name, data) in enumerate(files.items()):
@@ -153,7 +156,7 @@ class VMProvisioner:
             "ssh_pwauth": False,
             "runcmd": [
                 ["systemctl", "enable", "--now", "qemu-guest-agent"],
-            ]
+            ],
         }
         return yaml.dump(config)
 
@@ -272,13 +275,29 @@ class VMProvisioner:
     @classmethod
     def render_libvirt_xml(cls, spec):
         return cls.get_libvirt_xml(
-            spec.name, spec.ram_mb, spec.cpus,
-            disk_path=spec.disk_path, iso_path=spec.iso_path, cloud_init_path=spec.cloud_init_path,
-            virtio_win_path=spec.virtio_win_path, windows_auto_path=spec.windows_auto_path,
-            network_name=spec.network)
+            spec.name,
+            spec.ram_mb,
+            spec.cpus,
+            disk_path=spec.disk_path,
+            iso_path=spec.iso_path,
+            cloud_init_path=spec.cloud_init_path,
+            virtio_win_path=spec.virtio_win_path,
+            windows_auto_path=spec.windows_auto_path,
+            network_name=spec.network,
+        )
 
     @staticmethod
-    def get_libvirt_xml(vm_name, ram_mb=2048, cpu_count=2, disk_path=None, iso_path=None, cloud_init_path=None, virtio_win_path=None, windows_auto_path=None, network_name="malware-analysis"):
+    def get_libvirt_xml(
+        vm_name,
+        ram_mb=2048,
+        cpu_count=2,
+        disk_path=None,
+        iso_path=None,
+        cloud_init_path=None,
+        virtio_win_path=None,
+        windows_auto_path=None,
+        network_name="malware-analysis",
+    ):
         allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
         if not vm_name or any(c not in allowed for c in vm_name):
             raise ValueError("vm_name contains invalid characters")
@@ -292,10 +311,14 @@ class VMProvisioner:
         """
 
         cdroms = []
-        if iso_path: cdroms.append(iso_path)
-        if cloud_init_path: cdroms.append(cloud_init_path)
-        if virtio_win_path: cdroms.append(virtio_win_path)
-        if windows_auto_path: cdroms.append(windows_auto_path)
+        if iso_path:
+            cdroms.append(iso_path)
+        if cloud_init_path:
+            cdroms.append(cloud_init_path)
+        if virtio_win_path:
+            cdroms.append(virtio_win_path)
+        if windows_auto_path:
+            cdroms.append(windows_auto_path)
 
         for i, path in enumerate(cdroms):
             dev = f"sd{chr(ord('a') + i)}"

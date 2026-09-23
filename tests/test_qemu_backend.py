@@ -38,7 +38,9 @@ class FakeAgent:
             elif cmd == "guest-file-open":
                 handle = len(self.handles) + 1
                 self.handles[handle] = [args["path"], args["mode"], 0]
-                self.files.setdefault(args["path"], b"") if "r" in args["mode"] else self.files.__setitem__(args["path"], b"")
+                self.files.setdefault(args["path"], b"") if "r" in args["mode"] else self.files.__setitem__(
+                    args["path"], b""
+                )
                 writer.write(json.dumps({"return": handle}).encode() + b"\n")
             elif cmd == "guest-file-write":
                 path = self.handles[args["handle"]][0]
@@ -46,10 +48,15 @@ class FakeAgent:
                 writer.write(b'{"return": {"count": 1}}\n')
             elif cmd == "guest-file-read":
                 h = self.handles[args["handle"]]
-                data = self.files[h[0]][h[2]:h[2] + args["count"]]
+                data = self.files[h[0]][h[2] : h[2] + args["count"]]
                 h[2] += len(data)
                 eof = h[2] >= len(self.files[h[0]])
-                writer.write(json.dumps({"return": {"count": len(data), "buf-b64": base64.b64encode(data).decode(), "eof": eof}}).encode() + b"\n")
+                writer.write(
+                    json.dumps(
+                        {"return": {"count": len(data), "buf-b64": base64.b64encode(data).decode(), "eof": eof}}
+                    ).encode()
+                    + b"\n"
+                )
             elif cmd == "guest-file-close":
                 writer.write(b'{"return": {}}\n')
             else:
@@ -98,14 +105,23 @@ def _backend_with(accel):
     return b
 
 
-@pytest.mark.parametrize("mode,expect_netdev", [
-    ("restricted", "user,id=n0,restrict=on"),
-    ("user", "user,id=n0"),
-])
+@pytest.mark.parametrize(
+    "mode,expect_netdev",
+    [
+        ("restricted", "user,id=n0,restrict=on"),
+        ("user", "user,id=n0"),
+    ],
+)
 def test_build_command_network_modes(mode, expect_netdev):
     b = _backend_with("tcg")
-    vm = {"name": "t", "ram_mb": 1024, "cpus": 1, "disk_path": "d.qcow2", "cloud_init_path": "seed.iso",
-          "network_mode": mode}
+    vm = {
+        "name": "t",
+        "ram_mb": 1024,
+        "cpus": 1,
+        "disk_path": "d.qcow2",
+        "cloud_init_path": "seed.iso",
+        "network_mode": mode,
+    }
     cmd = b.build_command(vm, {"qmp_port": 1, "qga_port": 2, "vnc_display": 100})
     assert cmd[cmd.index("-netdev") + 1] == expect_netdev
     assert "file=seed.iso,media=cdrom,readonly=on" in cmd
@@ -116,7 +132,8 @@ def test_build_command_network_modes(mode, expect_netdev):
 def test_build_command_whpx_avoids_cpu_max():
     cmd = _backend_with("whpx").build_command(
         {"name": "t", "ram_mb": 512, "cpus": 1, "disk_path": "d.qcow2"},
-        {"qmp_port": 1, "qga_port": 2, "vnc_display": 100})
+        {"qmp_port": 1, "qga_port": 2, "vnc_display": 100},
+    )
     assert cmd[cmd.index("-accel") + 1] == "whpx,kernel-irqchip=off"
     assert "-cpu" not in cmd
 
@@ -124,7 +141,9 @@ def test_build_command_whpx_avoids_cpu_max():
 @pytest.mark.asyncio
 async def test_define_and_switch_network_updates_isolation():
     b = _backend_with("tcg")
-    await b.define_vm(VMSpec(name="iso-test", disk_path="d.qcow2", network=PROVISION_NETWORK, cloud_init_path="seed.iso"))
+    await b.define_vm(
+        VMSpec(name="iso-test", disk_path="d.qcow2", network=PROVISION_NETWORK, cloud_init_path="seed.iso")
+    )
     assert await b.find_internet_facing_networks("iso-test") == ["QEMU user-mode NAT"]
     await b.switch_network("iso-test", PROVISION_NETWORK, "malware-analysis")
     assert await b.find_internet_facing_networks("iso-test") == []
@@ -176,8 +195,9 @@ class RecordingMock(MockVMManager):
 async def test_provisioning_flow_isolates_before_snapshot():
     backend = RecordingMock()
     messages = []
-    password = await provision_vm(backend, "vm1", provisioner=FakeProvisioner(),
-                                  progress=lambda m, f: messages.append((m, f)))
+    password = await provision_vm(
+        backend, "vm1", provisioner=FakeProvisioner(), progress=lambda m, f: messages.append((m, f))
+    )
     assert password == "pw123"
     assert backend.calls == [
         ("define", PROVISION_NETWORK, "seed.iso"),

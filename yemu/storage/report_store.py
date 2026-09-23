@@ -1,8 +1,11 @@
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
 import json
 import os
+
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
 from yemu import paths
+
 
 class ReportStore:
     def __init__(self, output_dir=None):

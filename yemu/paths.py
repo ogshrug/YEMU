@@ -6,13 +6,14 @@ Per-user locations for YEMU data, resolved per platform:
 
 Set YEMU_HOME to put everything under one directory instead (portable installs, tests).
 """
+
 import os
 from pathlib import Path
 
 try:
-    from platformdirs import PlatformDirs
+    import platformdirs
 except ImportError:
-    PlatformDirs = None
+    platformdirs = None  # type: ignore[assignment]
 
 APP_NAME = "YEMU"
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -36,9 +37,9 @@ def _base_dirs():
     if override:
         root = Path(override).expanduser()
         return root / "data", root / "config", root / "cache"
-    if PlatformDirs:
+    if platformdirs is not None:
         # appauthor=False keeps Windows paths as %LOCALAPPDATA%\YEMU rather than ...\<author>\YEMU
-        dirs = PlatformDirs(appname=APP_NAME if os.name == "nt" else "yemu", appauthor=False)
+        dirs = platformdirs.PlatformDirs(appname=APP_NAME if os.name == "nt" else "yemu", appauthor=False)
         return Path(dirs.user_data_dir), Path(dirs.user_config_dir), Path(dirs.user_cache_dir)
     return _fallback_dirs()
 
@@ -96,6 +97,7 @@ def vm_storage_dir():
     if os.environ.get("YEMU_HOME") or os.name == "nt":
         return _ensure(data_dir() / "vms")
     import getpass
+
     return _ensure(Path("/var/tmp") / f"yemu-{getpass.getuser()}")
 
 

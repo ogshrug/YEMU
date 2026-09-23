@@ -2,6 +2,7 @@
 User settings loaded from paths.config_file() (config.toml). Every key is optional;
 missing keys fall back to DEFAULTS. `yemu config --init` writes a commented template.
 """
+
 import copy
 import json
 import logging
@@ -10,9 +11,9 @@ try:
     import tomllib
 except ImportError:  # Python < 3.11
     try:
-        import tomli as tomllib
+        import tomli as tomllib  # type: ignore[no-redef]
     except ImportError:
-        tomllib = None
+        tomllib = None  # type: ignore[assignment]
 
 from yemu import paths
 
@@ -20,26 +21,26 @@ logger = logging.getLogger(__name__)
 
 DEFAULTS = {
     "vm": {
-        "backend": "auto",              # auto | libvirt | qemu | mock
+        "backend": "auto",  # auto | libvirt | qemu | mock
         "default_vm": "ubuntu-clean",
         "default_snapshot": "clean-baseline",
-        "agent_timeout": 300,           # seconds to wait for qemu-guest-agent
+        "agent_timeout": 300,  # seconds to wait for qemu-guest-agent
     },
     "qemu": {
-        "bin_dir": "",                  # folder with qemu-system-x86_64 / qemu-img; empty = PATH + usual dirs
-        "accel": "auto",                # auto | whpx | kvm | hvf | tcg
+        "bin_dir": "",  # folder with qemu-system-x86_64 / qemu-img; empty = PATH + usual dirs
+        "accel": "auto",  # auto | whpx | kvm | hvf | tcg
         "extra_args": [],
     },
     "network": {
         "name": "malware-analysis",
-        "allow_internet": False,        # silence the isolation warning when True
+        "allow_internet": False,  # silence the isolation warning when True
     },
     "analysis": {
-        "execution_wait": 5,            # seconds the sample runs before logs are collected
-        "timeout": 900,                 # hard limit for a whole analysis; the VM is powered off after it
-        "max_sample_mb": 256,           # refuse larger samples
-        "max_events": 20000,            # behaviour events stored per analysis (the rest are counted, not stored)
-        "max_pcap_mb": 200,             # captures larger than this are not copied back to the host
+        "execution_wait": 5,  # seconds the sample runs before logs are collected
+        "timeout": 900,  # hard limit for a whole analysis; the VM is powered off after it
+        "max_sample_mb": 256,  # refuse larger samples
+        "max_events": 20000,  # behaviour events stored per analysis (the rest are counted, not stored)
+        "max_pcap_mb": 200,  # captures larger than this are not copied back to the host
     },
     "scoring": {
         "yara_match": 40,
@@ -55,11 +56,11 @@ DEFAULTS = {
     "rules": {
         "repo_url": "https://github.com/Yara-Rules/rules",
         "branch": "master",
-        "ref": "",                      # pin to a commit SHA or tag; empty = latest commit of `branch`
+        "ref": "",  # pin to a commit SHA or tag; empty = latest commit of `branch`
         "max_download_mb": 100,
     },
     "ui": {
-        "theme": "system",              # system | light | dark
+        "theme": "system",  # system | light | dark
     },
 }
 

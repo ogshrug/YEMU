@@ -5,18 +5,33 @@ from argparse import Namespace
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QLineEdit,
-                               QMessageBox, QPlainTextEdit, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QGridLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from yemu import config as yemu_config
 from yemu import paths
 from yemu.core.vm_backend import BACKENDS
-from yemu.gui.widgets import button, card, label, page_header
+from yemu.gui.widgets import button, card, label, page_header, show_status
 
 
 def _spin(lo, hi, suffix=""):
     s = QSpinBox()
-    s.setButtonSymbols(QSpinBox.NoButtons)  # arrows render poorly under the stylesheet; wheel/keys still work
+    s.setButtonSymbols(
+        QSpinBox.ButtonSymbols.NoButtons
+    )  # arrows render poorly under the stylesheet; wheel/keys still work
     s.setRange(lo, hi)
     if suffix:
         s.setSuffix(suffix)
@@ -88,7 +103,9 @@ class SettingsPage(QWidget):
         f.addRow("Acceleration", self.accel)
         f.addRow("Extra arguments", self.extra_args)
         ql.addLayout(f)
-        ql.addWidget(label("WHPX is used on Windows, KVM on Linux; tcg is slow software emulation.", "Muted", wrap=True))
+        ql.addWidget(
+            label("WHPX is used on Windows, KVM on Linux; tcg is slow software emulation.", "Muted", wrap=True)
+        )
         ql.addStretch(1)
         grid.addWidget(q_card, 0, 1)
 
@@ -102,8 +119,14 @@ class SettingsPage(QWidget):
         self.allow_internet = QCheckBox("Samples are allowed to reach the internet (silences the isolation warning)")
         self.allow_internet.toggled.connect(self._warn_internet)
         nl.addWidget(self.allow_internet)
-        nl.addWidget(label("Leave this off unless you deliberately run a NAT/bridged VM. Live malware can attack "
-                           "other hosts and tip off its operators.", "Muted", wrap=True))
+        nl.addWidget(
+            label(
+                "Leave this off unless you deliberately run a NAT/bridged VM. Live malware can attack "
+                "other hosts and tip off its operators.",
+                "Muted",
+                wrap=True,
+            )
+        )
         nl.addStretch(1)
         grid.addWidget(n_card, 1, 0)
 
@@ -159,7 +182,9 @@ class SettingsPage(QWidget):
         self.doctor_out.setObjectName("Code")
         self.doctor_out.setReadOnly(True)
         self.doctor_out.setMinimumHeight(220)
-        self.doctor_out.setPlaceholderText("Checks Python packages, QEMU and acceleration, libvirt, and the GUI toolkit.")
+        self.doctor_out.setPlaceholderText(
+            "Checks Python packages, QEMU and acceleration, libvirt, and the GUI toolkit."
+        )
         dl.addWidget(self.doctor_out)
         root.addWidget(d_card)
         root.addStretch(1)
@@ -191,10 +216,16 @@ class SettingsPage(QWidget):
             self.bin_dir.setText(d)
 
     def _warn_internet(self, checked):
-        if checked and QMessageBox.warning(
-                self, "Allow internet access?",
+        if (
+            checked
+            and QMessageBox.warning(
+                self,
+                "Allow internet access?",
                 "Samples will be able to reach real infrastructure. Only do this on a dedicated, monitored network.",
-                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            )
+            != QMessageBox.StandardButton.Ok
+        ):
             self.allow_internet.setChecked(False)
 
     def save(self):
@@ -202,20 +233,28 @@ class SettingsPage(QWidget):
             QMessageBox.information(self, "YEMU", "Wait for the running analysis to finish before changing settings.")
             return
         c = copy.deepcopy(self.ctx.config)
-        c["vm"].update(backend=self.backend.currentText(), default_vm=self.default_vm.text().strip(),
-                       default_snapshot=self.default_snap.text().strip() or "clean-baseline",
-                       agent_timeout=self.agent_timeout.value())
-        c["analysis"].update(execution_wait=self.exec_wait.value(), timeout=self.timeout.value(),
-                             max_sample_mb=self.max_sample.value())
-        c["qemu"].update(bin_dir=self.bin_dir.text().strip(), accel=self.accel.currentText(),
-                         extra_args=self.extra_args.text().split())
-        c["network"].update(name=self.net_name.text().strip() or "malware-analysis",
-                            allow_internet=self.allow_internet.isChecked())
+        c["vm"].update(
+            backend=self.backend.currentText(),
+            default_vm=self.default_vm.text().strip(),
+            default_snapshot=self.default_snap.text().strip() or "clean-baseline",
+            agent_timeout=self.agent_timeout.value(),
+        )
+        c["analysis"].update(
+            execution_wait=self.exec_wait.value(), timeout=self.timeout.value(), max_sample_mb=self.max_sample.value()
+        )
+        c["qemu"].update(
+            bin_dir=self.bin_dir.text().strip(),
+            accel=self.accel.currentText(),
+            extra_args=self.extra_args.text().split(),
+        )
+        c["network"].update(
+            name=self.net_name.text().strip() or "malware-analysis", allow_internet=self.allow_internet.isChecked()
+        )
         c["ui"]["theme"] = self.theme.currentText()
         c["rules"].update(repo_url=self.repo.text().strip(), branch=self.branch.text().strip() or "master")
         path = yemu_config.save(c)
         self.ctx.reload_config()
-        self.window().statusBar().showMessage(f"Settings saved to {path}. Backend: {self.ctx.backend_label()}", 6000)
+        show_status(self, f"Settings saved to {path}. Backend: {self.ctx.backend_label()}", 6000)
 
     def _doctor(self):
         from yemu.cli import cmd_doctor
@@ -225,6 +264,10 @@ class SettingsPage(QWidget):
             with contextlib.redirect_stdout(buf):
                 cmd_doctor(Namespace(), self.ctx.config)
             return buf.getvalue()
+
         self.doctor_out.setPlainText("Running checks...")
-        self.ctx.bridge.call_sync(run, on_result=self.doctor_out.setPlainText,
-                                  on_error=lambda e: self.doctor_out.setPlainText(f"Diagnostics failed: {e}"))
+        self.ctx.bridge.call_sync(
+            run,
+            on_result=self.doctor_out.setPlainText,
+            on_error=lambda e: self.doctor_out.setPlainText(f"Diagnostics failed: {e}"),
+        )

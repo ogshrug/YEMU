@@ -8,6 +8,7 @@ import shlex
 import tempfile
 from collections import Counter
 from datetime import datetime
+from typing import Any
 
 from yemu import config as yemu_config
 from yemu import paths
@@ -69,7 +70,9 @@ class Orchestrator:
         return await self.vm_manager.run_command(run.guest_os, command)
 
     # ------------------------------------------------------------------ entry point
-    async def run_analysis(self, sample_path, guest_os="ubuntu-clean", snapshot_name="clean-baseline", run_gui=False, run_pcap=False):
+    async def run_analysis(
+        self, sample_path, guest_os="ubuntu-clean", snapshot_name="clean-baseline", run_gui=False, run_pcap=False
+    ):
         acfg = self.config["analysis"]
         run = _Run(sample_path, guest_os, snapshot_name, run_gui, run_pcap)
         self._notify_ui(f"Starting analysis on {guest_os} (Snapshot: {snapshot_name})...")
@@ -80,8 +83,11 @@ class Orchestrator:
             self._notify_ui(f"Cannot read sample: {e}", "CRITICAL")
             return None
         if size > acfg["max_sample_mb"] * 1024 * 1024:
-            self._notify_ui(f"Sample is {size / 1048576:.0f} MB; the limit is {acfg['max_sample_mb']} MB "
-                            "([analysis].max_sample_mb).", "CRITICAL")
+            self._notify_ui(
+                f"Sample is {size / 1048576:.0f} MB; the limit is {acfg['max_sample_mb']} MB "
+                "([analysis].max_sample_mb).",
+                "CRITICAL",
+            )
             return None
 
         await self._static_scan(run)
@@ -124,6 +130,7 @@ class Orchestrator:
     async def _static_scan(self, run):
         try:
             from yemu.core.yara_engine import YaraEngine
+
             self.yara_engine = YaraEngine(rules_dir=paths.synced_rules_dir())
             self._notify_ui("Running YARA static analysis...")
             run.static_matches = await self.yara_engine.scan_file_async(run.sample_path)
@@ -131,7 +138,7 @@ class Orchestrator:
                 m["source"] = "static"
                 self._notify_ui(f"YARA Static Match: {m['rule']}", "WARN")
         except Exception as e:
-            self.yara_engine = None
+            self.yara_engine = None  # type: ignore[assignment]
             self._notify_ui(f"Static analysis failed: {e}", "WARN")
 
     async def _create_records(self, run):
@@ -143,12 +150,15 @@ class Orchestrator:
                     md5.update(chunk)
                     run.size += len(chunk)
             run.sha256, run.md5 = sha256.hexdigest(), md5.hexdigest()
-            sample_id = await self.db.add_sample(run.sha256, run.md5, os.path.basename(run.sample_path), "unknown", run.size)
+            sample_id = await self.db.add_sample(
+                run.sha256, run.md5, os.path.basename(run.sample_path), "unknown", run.size
+            )
             if not sample_id:
                 self._notify_ui("Failed to create sample record in database.", "CRITICAL")
                 return False
-            run.analysis_id = await self.db.create_analysis(sample_id, datetime.now(), guest_os=run.guest_os,
-                                                            snapshot=run.snapshot)
+            run.analysis_id = await self.db.create_analysis(
+                sample_id, datetime.now(), guest_os=run.guest_os, snapshot=run.snapshot
+            )
             if not run.analysis_id:
                 self._notify_ui("Failed to create analysis record in database.", "CRITICAL")
                 return False
@@ -178,17 +188,22 @@ class Orchestrator:
         if not ok:
             raise AnalysisAborted(f"VM verification failed: {msg}")
 
-        exposed = await vm.find_internet_facing_networks(run.guest_os) if hasattr(vm, "find_internet_facing_networks") else []
+        exposed = (
+            await vm.find_internet_facing_networks(run.guest_os) if hasattr(vm, "find_internet_facing_networks") else []
+        )
         if exposed and not self.config["network"]["allow_internet"]:
-            self._notify_ui(f"WARNING: {run.guest_os} is not isolated ({', '.join(exposed)} can reach the host "
-                            "LAN/internet). Samples may contact live infrastructure.", "CRITICAL")
+            self._notify_ui(
+                f"WARNING: {run.guest_os} is not isolated ({', '.join(exposed)} can reach the host "
+                "LAN/internet). Samples may contact live infrastructure.",
+                "CRITICAL",
+            )
 
         self._notify_ui(f"Reverting VM to snapshot {run.snapshot}...")
         try:
             await vm.revert_to_snapshot(run.guest_os, snapshot_name=run.snapshot)
         except Exception as e:
             # never detonate on a VM that may still carry a previous infection
-            raise AnalysisAborted(f"Could not revert to snapshot '{run.snapshot}': {e}")
+            raise AnalysisAborted(f"Could not revert to snapshot '{run.snapshot}': {e}") from e
 
         self._notify_ui("Starting VM...")
         if not await vm.start_vm(run.guest_os):
@@ -218,8 +233,11 @@ class Orchestrator:
             await self._cmd(run, f"tcpdump -i any -U -w {q(run.guest_pcap)} >/dev/null 2>&1 &")
         self._notify_ui("Executing sample with strace monitoring...")
         await self.db.add_event(run.analysis_id, "process", 0.1, "INFO", {"msg": "Execution started"})
-        await self._cmd(run, f"chmod +x {q(run.guest_sample)} && cd {q(run.workdir)} && "
-                             f"strace -ff -tt -s 256 -o {q(run.guest_strace)} {q(run.guest_sample)} >/dev/null 2>&1 &")
+        await self._cmd(
+            run,
+            f"chmod +x {q(run.guest_sample)} && cd {q(run.workdir)} && "
+            f"strace -ff -tt -s 256 -o {q(run.guest_strace)} {q(run.guest_sample)} >/dev/null 2>&1 &",
+        )
 
     async def _memory_scan(self, run):
         try:
@@ -243,8 +261,10 @@ class Orchestrator:
 
             if not (await self._cmd(run, "command -v yara")).strip():
                 # the analysis network is offline, so it can't be installed now
-                self._notify_ui("YARA is not installed in the guest (rebuild the VM with `yemu vm create`); "
-                                "skipping memory scan.", "WARN")
+                self._notify_ui(
+                    "YARA is not installed in the guest (rebuild the VM with `yemu vm create`); skipping memory scan.",
+                    "WARN",
+                )
                 return
             # scan only the sample's own process tree (PIDs from its strace logs), one bounded call each;
             # a recursive scan of /proc takes minutes and mostly scans the guest OS
@@ -252,8 +272,13 @@ class Orchestrator:
             pids = sorted({m.group(1) for m in map(STRACE_LOG.match, listing.split()) if m}, key=int)[:MAX_SCAN_PIDS]
             output = []
             for pid in pids:
-                output.append(await self._cmd(
-                    run, f"[ -d /proc/{pid} ] && timeout 25 yara -C --print-meta --print-strings {q(run.guest_rules)} {pid} 2>/dev/null"))
+                output.append(
+                    await self._cmd(
+                        run,
+                        f"[ -d /proc/{pid} ] && timeout 25 "
+                        f"yara -C --print-meta --print-strings {q(run.guest_rules)} {pid} 2>/dev/null",
+                    )
+                )
             if not pids:
                 self._notify_ui("The sample's processes had already exited; nothing left in memory to scan.")
             run.memory_matches = self.yara_engine.parse_yara_cli_output("\n".join(output))
@@ -281,20 +306,24 @@ class Orchestrator:
             # file names come from the guest: only accept strace.<pid>
             logs = sorted((m.group(0), m.group(1)) for m in map(STRACE_LOG.match, listing.split()) if m)
             from yemu.core.behaviour_monitor import BehaviourMonitor
+
             monitor = BehaviourMonitor()
             for name, pid in logs:
                 content = await self._cmd(run, f"cat {q(run.workdir + '/' + name)}")
                 run.events.extend(monitor.parse_strace(content.splitlines(), pid=pid))
             run.events.sort(key=lambda e: e.get("timestamp", 0))
-            keep = run.events[:acfg["max_events"]]
+            keep = run.events[: acfg["max_events"]]
             run.dropped_events = len(run.events) - len(keep)
             await self.db.add_events(run.analysis_id, [(e["type"], e.get("timestamp", 0), "INFO", e) for e in keep])
             counts = Counter(e["type"] for e in run.events)
             summary = ", ".join(f"{n} {t}" for t, n in counts.most_common()) or "no events"
             self._notify_ui(f"Behavior: {len(logs)} process(es), {summary}")
             if run.dropped_events:
-                self._notify_ui(f"Stored the first {len(keep)} events; {run.dropped_events} more were dropped "
-                                "([analysis].max_events).", "WARN")
+                self._notify_ui(
+                    f"Stored the first {len(keep)} events; {run.dropped_events} more were dropped "
+                    "([analysis].max_events).",
+                    "WARN",
+                )
         except Exception as e:
             self._notify_ui(f"Strace collection failed: {e}", "WARN")
 
@@ -307,22 +336,30 @@ class Orchestrator:
                 self._notify_ui("No packet capture was produced in the guest.", "WARN")
                 return
             if int(size) > max_mb * 1024 * 1024:
-                self._notify_ui(f"Capture is {int(size) / 1048576:.0f} MB, over the {max_mb} MB limit; not copied.", "WARN")
+                self._notify_ui(
+                    f"Capture is {int(size) / 1048576:.0f} MB, over the {max_mb} MB limit; not copied.", "WARN"
+                )
                 return
             local_pcap = str(paths.captures_dir() / f"{run.analysis_id}.pcap")
-            if not await self.vm_manager.pull_file(run.guest_os, run.guest_pcap, local_pcap) or not os.path.exists(local_pcap):
+            if not await self.vm_manager.pull_file(run.guest_os, run.guest_pcap, local_pcap) or not os.path.exists(
+                local_pcap
+            ):
                 raise RuntimeError("no capture file came back from the guest")
             from yemu.core.network_capture import NetworkCapture
+
             iocs = NetworkCapture().analyze_pcap(local_pcap)
-            await self.db.add_events(run.analysis_id, [("network", 0, "INFO", {"type": t, "value": v, "source": "pcap"})
-                                                       for t, v in iocs])
+            await self.db.add_events(
+                run.analysis_id, [("network", 0, "INFO", {"type": t, "value": v, "source": "pcap"}) for t, v in iocs]
+            )
         except Exception as e:
             self._notify_ui(f"PCAP collection failed: {e}", "WARN")
 
     async def _score_and_save(self, run, status):
         from yemu.core.threat_scorer import ThreatScorer
+
         yara_matches = run.static_matches + run.memory_matches
-        verdict, score, findings = None, 0, {"reasons": []}
+        verdict, score = None, 0
+        findings: dict[str, Any] = {"reasons": []}
         try:
             self._notify_ui("Computing threat score...")
             findings = heuristics.analyse(run.events)
@@ -331,9 +368,16 @@ class Orchestrator:
             verdict = scorer.get_verdict(score)
             if status != "completed":
                 self._notify_ui(f"Verdict is based on partial results (analysis {status}).", "WARN")
-            self._notify_ui(f"Analysis complete. Verdict: {verdict} (Score: {score})", "CRITICAL" if score >= 70 else "INFO")
-            await self.db.update_analysis(run.analysis_id, threat_score=score, verdict=verdict, yara_matches=yara_matches,
-                                          scoring={"weights": scorer.weights, "findings": findings})
+            self._notify_ui(
+                f"Analysis complete. Verdict: {verdict} (Score: {score})", "CRITICAL" if score >= 70 else "INFO"
+            )
+            await self.db.update_analysis(
+                run.analysis_id,
+                threat_score=score,
+                verdict=verdict,
+                yara_matches=yara_matches,
+                scoring={"weights": scorer.weights, "findings": findings},
+            )
         except Exception as e:
             self._notify_ui(f"Threat scoring failed: {e}", "WARN")
 
@@ -352,6 +396,7 @@ class Orchestrator:
             }
             await self.db.update_analysis(run.analysis_id, report_json=report)
             from yemu.storage.report_store import ReportStore
+
             store = ReportStore()
             store.save_json(run.analysis_id, report)
             store.generate_pdf(run.analysis_id, report)

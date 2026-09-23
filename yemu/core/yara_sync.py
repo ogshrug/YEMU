@@ -6,6 +6,7 @@ recorded in the manifest; the download and every file are size-capped; archive p
 are confined to the target folder (no zip-slip); each rule must compile; and the new
 set replaces the old one atomically, so a failed sync never leaves a half-updated set.
 """
+
 import datetime
 import io
 import json
@@ -39,8 +40,14 @@ class RuleSyncError(RuntimeError):
 
 
 class YaraRuleSync:
-    def __init__(self, repo_url="https://github.com/Yara-Rules/rules", branch="master", rules_dir=None,
-                 ref="", max_download_mb=100):
+    def __init__(
+        self,
+        repo_url="https://github.com/Yara-Rules/rules",
+        branch="master",
+        rules_dir=None,
+        ref="",
+        max_download_mb=100,
+    ):
         self.repo_url = repo_url.strip().rstrip('/')
         self.branch = branch or "master"
         self.ref = (ref or "").strip()
@@ -69,7 +76,9 @@ class YaraRuleSync:
             resp = requests.get(url, headers={"Accept": "application/vnd.github.sha"}, timeout=15)
             if resp.ok and re.fullmatch(r"[0-9a-f]{40}", resp.text.strip()):
                 return resp.text.strip()
-            self.logger.warning(f"Could not resolve {self.branch} to a commit (HTTP {resp.status_code}); using branch head")
+            self.logger.warning(
+                f"Could not resolve {self.branch} to a commit (HTTP {resp.status_code}); using branch head"
+            )
         except requests.RequestException as e:
             self.logger.warning(f"Could not resolve {self.branch} to a commit ({e}); using branch head")
         return self.branch
@@ -81,7 +90,9 @@ class YaraRuleSync:
             response.raise_for_status()
             total = int(response.headers.get("content-length", 0))
             if total > self.max_download:
-                raise RuleSyncError(f"Archive is {total / 1048576:.0f} MB, over the {self.max_download // 1048576} MB limit")
+                raise RuleSyncError(
+                    f"Archive is {total / 1048576:.0f} MB, over the {self.max_download // 1048576} MB limit"
+                )
             data = io.BytesIO()
             for chunk in response.iter_content(chunk_size=65536):
                 data.write(chunk)

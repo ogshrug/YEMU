@@ -1,8 +1,8 @@
-import os
 import sys
 import threading
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 if 'libvirt' not in sys.modules:
     sys.modules['libvirt'] = MagicMock()

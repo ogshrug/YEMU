@@ -8,6 +8,7 @@ Headless entry point; works on Linux and Windows.
     yemu sync-rules
     yemu doctor
 """
+
 import argparse
 import asyncio
 import json
@@ -17,9 +18,8 @@ import platform
 import shutil
 import sys
 
-from yemu import __version__
+from yemu import __version__, paths
 from yemu import config as yemu_config
-from yemu import paths
 from yemu.core.vm_backend import BACKENDS, create_backend
 
 SEVERITY_PREFIX = {"INFO": "[*]", "WARN": "[!]", "CRITICAL": "[X]"}
@@ -30,6 +30,7 @@ def _printer(quiet=False):
         if quiet and severity == "INFO":
             return
         print(f"{SEVERITY_PREFIX.get(severity, '[*]')} {msg}", file=sys.stderr, flush=True)
+
     return ui_callback
 
 
@@ -39,6 +40,7 @@ def _json_default(value):
 
 async def _with_db(fn):
     from yemu.storage.db import Database
+
     db = Database()
     await db.connect()
     try:
@@ -49,6 +51,7 @@ async def _with_db(fn):
 
 def cmd_gui(args, cfg):
     from yemu.app import main as gui_main
+
     return gui_main([sys.argv[0]])
 
 
@@ -101,8 +104,10 @@ def cmd_reports(args, cfg):
         return 0
     print(f"{'ID':>4}  {'VERDICT':<11} {'SCORE':>5}  {'STATUS':<11} {'STARTED':<26} FILE")
     for r in rows:
-        print(f"{r['id']:>4}  {(r['verdict'] or 'unknown'):<11} {(r['threat_score'] or 0):>5}  "
-              f"{(r.get('status') or '-'):<11} {str(r['started_at'] or ''):<26} {r['filename']}")
+        print(
+            f"{r['id']:>4}  {(r['verdict'] or 'unknown'):<11} {(r['threat_score'] or 0):>5}  "
+            f"{(r.get('status') or '-'):<11} {str(r['started_at'] or ''):<26} {r['filename']}"
+        )
     return 0
 
 
@@ -160,10 +165,19 @@ def cmd_vm_create(args, cfg):
             print(f"\r    {last['pct']:3d}%", end="", file=sys.stderr, flush=True)
 
     try:
-        password = asyncio.run(provision_vm(
-            backend, args.name, distro=args.distro, ram_mb=args.ram, cpus=args.cpus, disk_gb=args.disk,
-            analysis_network=cfg["network"]["name"], snapshot_name=cfg["vm"]["default_snapshot"],
-            progress=progress))
+        password = asyncio.run(
+            provision_vm(
+                backend,
+                args.name,
+                distro=args.distro,
+                ram_mb=args.ram,
+                cpus=args.cpus,
+                disk_gb=args.disk,
+                analysis_network=cfg["network"]["name"],
+                snapshot_name=cfg["vm"]["default_snapshot"],
+                progress=progress,
+            )
+        )
     except (ProvisioningError, RuntimeError, OSError) as e:
         print(f"\n[X] VM preparation failed: {e}", file=sys.stderr)
         return 1
@@ -209,10 +223,12 @@ def cmd_sync_rules(args, cfg):
         print(f"\r[{current}/{total}] {filename[:60]:<60}", end="", file=sys.stderr, flush=True)
 
     try:
-        sync = YaraRuleSync(repo_url=args.repo or cfg["rules"]["repo_url"],
-                            branch=args.branch or cfg["rules"]["branch"],
-                            ref=args.ref if args.ref is not None else cfg["rules"]["ref"],
-                            max_download_mb=cfg["rules"]["max_download_mb"])
+        sync = YaraRuleSync(
+            repo_url=args.repo or cfg["rules"]["repo_url"],
+            branch=args.branch or cfg["rules"]["branch"],
+            ref=args.ref if args.ref is not None else cfg["rules"]["ref"],
+            max_download_mb=cfg["rules"]["max_download_mb"],
+        )
         manifest = sync.sync(progress_callback=progress)
     except (RuleSyncError, OSError) as e:
         print(f"\nRule sync failed: {e}", file=sys.stderr)
@@ -260,24 +276,37 @@ def cmd_doctor(args, cfg):
     print("\nDesktop app:")
     try:
         import PySide6
+
         _check("PySide6 (Qt)", True, PySide6.__version__)
     except Exception as e:
         _check("PySide6 (Qt)", False, f"{type(e).__name__}: pip install \"yemu[gui]\"")
 
     print("\nVM backend (qemu, works on Windows and Linux):")
     from yemu.core.qemu_backend import QemuBackend
+
     qemu = QemuBackend(config=cfg)
-    _check("qemu-system-x86_64", bool(qemu.qemu_system), qemu.qemu_system or "not found (install QEMU or set [qemu].bin_dir)")
+    _check(
+        "qemu-system-x86_64",
+        bool(qemu.qemu_system),
+        qemu.qemu_system or "not found (install QEMU or set [qemu].bin_dir)",
+    )
     _check("qemu-img", bool(qemu.qemu_img), qemu.qemu_img or "not found")
     if qemu.qemu_system:
         accel = qemu.accel
-        _check("hardware acceleration", accel != "tcg",
-               accel if accel != "tcg" else "tcg only: enable Windows Hypervisor Platform (Windows) or /dev/kvm access (Linux)")
+        _check(
+            "hardware acceleration",
+            accel != "tcg",
+            accel
+            if accel != "tcg"
+            else "tcg only: enable Windows Hypervisor Platform (Windows) or /dev/kvm access (Linux)",
+        )
     try:
         import pycdlib  # noqa: F401
+
         _check("cloud-init ISO builder", True, "pycdlib")
     except ImportError:
         from yemu.core.vm_provisioner import VMProvisioner
+
         tool = VMProvisioner._find_mkisofs()
         _check("cloud-init ISO builder", bool(tool), tool or "install pycdlib or genisoimage")
 
@@ -287,17 +316,22 @@ def cmd_doctor(args, cfg):
     else:
         if _is_wsl():
             print("  Running inside WSL2.")
-            _check("systemd (needed by libvirtd)", os.path.isdir("/run/systemd/system"),
-                   "add [boot] systemd=true to /etc/wsl.conf, then run `wsl --shutdown`")
+            _check(
+                "systemd (needed by libvirtd)",
+                os.path.isdir("/run/systemd/system"),
+                "add [boot] systemd=true to /etc/wsl.conf, then run `wsl --shutdown`",
+            )
         _check("/dev/kvm", os.path.exists("/dev/kvm"))
         for tool in ("virsh", "qemu-img", "virt-copy-in", "virt-viewer"):
             _check(tool, shutil.which(tool) is not None)
         try:
             import libvirt  # noqa: F401
+
             _check("libvirt-python", True)
         except ImportError:
             _check("libvirt-python", False)
         from yemu.core.vm_manager import VMManager
+
         try:
             VMManager()._get_conn()
             _check("libvirt connection", True, "connected")
@@ -396,8 +430,11 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     from yemu.logging_setup import setup_logging
-    setup_logging(console_level=logging.DEBUG if args.verbose else logging.WARNING,
-                  file_level=logging.DEBUG if args.verbose else logging.INFO)
+
+    setup_logging(
+        console_level=logging.DEBUG if args.verbose else logging.WARNING,
+        file_level=logging.DEBUG if args.verbose else logging.INFO,
+    )
     if not getattr(args, "func", None):
         parser.print_help()
         return 0

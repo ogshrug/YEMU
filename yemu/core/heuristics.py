@@ -4,22 +4,60 @@ Turns raw behaviour events into scored findings with human-readable reasons.
 Only activity attributable to the sample's process tree (strace) counts; guest OS
 background traffic seen in the PCAP is reported as IOCs but never scored.
 """
+
 import ipaddress
 import os
 import re
 
 SENSITIVE_READ = (
-    "/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/root/.ssh", "/.ssh/", "/.aws/credentials",
-    "/.bash_history", "/.gnupg", "/etc/ssh/ssh_host_",
+    "/etc/shadow",
+    "/etc/gshadow",
+    "/etc/sudoers",
+    "/root/.ssh",
+    "/.ssh/",
+    "/.aws/credentials",
+    "/.bash_history",
+    "/.gnupg",
+    "/etc/ssh/ssh_host_",
 )
 PERSISTENCE = (
-    "/etc/cron", "/var/spool/cron", "/etc/systemd/system", "/lib/systemd/system", "/.config/systemd/user",
-    "/etc/init.d", "/etc/rc.local", "/etc/profile", "/.bashrc", "/.bash_profile", "/.profile",
-    "/etc/ld.so.preload", "/.ssh/authorized_keys", "/etc/xdg/autostart", "/.config/autostart",
+    "/etc/cron",
+    "/var/spool/cron",
+    "/etc/systemd/system",
+    "/lib/systemd/system",
+    "/.config/systemd/user",
+    "/etc/init.d",
+    "/etc/rc.local",
+    "/etc/profile",
+    "/.bashrc",
+    "/.bash_profile",
+    "/.profile",
+    "/etc/ld.so.preload",
+    "/.ssh/authorized_keys",
+    "/etc/xdg/autostart",
+    "/.config/autostart",
 )
 SUSPICIOUS_EXEC = {
-    "curl", "wget", "nc", "ncat", "netcat", "socat", "python", "python3", "perl", "base64", "chmod",
-    "crontab", "systemctl", "useradd", "passwd", "iptables", "nohup", "setsid", "dd", "shred",
+    "curl",
+    "wget",
+    "nc",
+    "ncat",
+    "netcat",
+    "socat",
+    "python",
+    "python3",
+    "perl",
+    "base64",
+    "chmod",
+    "crontab",
+    "systemctl",
+    "useradd",
+    "passwd",
+    "iptables",
+    "nohup",
+    "setsid",
+    "dd",
+    "shred",
 }
 SHELLS = {"sh", "bash", "dash", "zsh", "ash"}
 WRITE_FLAGS = re.compile(r"O_(WRONLY|RDWR|CREAT|TRUNC|APPEND)")

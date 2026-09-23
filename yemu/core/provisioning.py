@@ -5,6 +5,7 @@ Flow: download a cloud image -> build a cloud-init seed -> create an overlay dis
 boot on the NAT provisioning network so the guest can install its tools ->
 move the VM to the isolated analysis network -> snapshot "clean-baseline".
 """
+
 import asyncio
 import os
 import zipfile
@@ -20,9 +21,19 @@ class ProvisioningError(RuntimeError):
     pass
 
 
-async def provision_vm(backend, vm_name, distro="ubuntu", ram_mb=2048, cpus=2, disk_gb=20,
-                       analysis_network="malware-analysis", snapshot_name="clean-baseline",
-                       agent_timeout=900, progress=None, provisioner=None):
+async def provision_vm(
+    backend,
+    vm_name,
+    distro="ubuntu",
+    ram_mb=2048,
+    cpus=2,
+    disk_gb=20,
+    analysis_network="malware-analysis",
+    snapshot_name="clean-baseline",
+    agent_timeout=900,
+    progress=None,
+    provisioner=None,
+):
     """
     Create a ready-to-analyse VM. progress(message, fraction) is called as it goes
     (fraction is None for pure log lines). Returns the guest console password.
@@ -49,8 +60,14 @@ async def provision_vm(backend, vm_name, distro="ubuntu", ram_mb=2048, cpus=2, d
         if total:
             report(None, 0.05 + 0.3 * done / total)
 
-    spec = VMSpec(name=vm_name, disk_path=backend.vm_disk_path(vm_name), ram_mb=ram_mb, cpus=cpus,
-                  network=PROVISION_NETWORK, os_type="windows" if distro == "windows" else "linux")
+    spec = VMSpec(
+        name=vm_name,
+        disk_path=backend.vm_disk_path(vm_name),
+        ram_mb=ram_mb,
+        cpus=cpus,
+        network=PROVISION_NETWORK,
+        os_type="windows" if distro == "windows" else "linux",
+    )
     backing = None
     procmon_path = None
     if distro in LINUX_DISTROS:
@@ -59,7 +76,8 @@ async def provision_vm(backend, vm_name, distro="ubuntu", ram_mb=2048, cpus=2, d
         backing = await asyncio.to_thread(provisioner.download_file, url, None, download_progress)
         report("Generating cloud-init seed...", 0.36)
         spec.cloud_init_path = await asyncio.to_thread(
-            provisioner.create_cloud_init_iso, vm_name, provisioner.get_default_user_data())
+            provisioner.create_cloud_init_iso, vm_name, provisioner.get_default_user_data()
+        )
     else:
         report("Downloading Windows ISO, VirtIO drivers and Procmon...")
         spec.iso_path = await asyncio.to_thread(provisioner.download_iso, "windows")

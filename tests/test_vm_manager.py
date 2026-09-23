@@ -1,10 +1,9 @@
-
 import asyncio
+
 import pytest
-import logging
-from yemu.core.vm_manager import VMManager, MockVMManager
-from yemu.core.orchestrator import Orchestrator
-import libvirt
+
+from yemu.core.vm_manager import MockVMManager, VMManager
+
 
 @pytest.mark.asyncio
 async def test_vm_manager_connection_fallback():
@@ -15,6 +14,7 @@ async def test_vm_manager_connection_fallback():
         print(f"Connected to: {conn.getURI()}")
     except Exception as e:
         print(f"Connection failed as expected in restricted environment: {e}")
+
 
 @pytest.mark.asyncio
 async def test_mock_vm_manager():
@@ -28,10 +28,12 @@ async def test_mock_vm_manager():
     assert "execve" in out
     print("MockVMManager run_command passed")
 
+
 async def main():
     await test_vm_manager_connection_fallback()
     await test_mock_vm_manager()
     print("All additional tests passed!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

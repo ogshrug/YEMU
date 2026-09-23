@@ -1,19 +1,38 @@
 """Colours, stylesheet and line icons for the YEMU desktop app."""
+
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 LIGHT = {
-    "bg": "#f5f6f8", "surface": "#ffffff", "surface_alt": "#f0f2f5", "border": "#e2e5ea",
-    "text": "#1b2230", "muted": "#687385", "accent": "#4f46e5", "accent_text": "#ffffff",
-    "accent_soft": "#eceafd", "sidebar": "#111827", "sidebar_text": "#c9cfda",
-    "sidebar_active": "#1f2937", "code_bg": "#fbfbfc",
+    "bg": "#f5f6f8",
+    "surface": "#ffffff",
+    "surface_alt": "#f0f2f5",
+    "border": "#e2e5ea",
+    "text": "#1b2230",
+    "muted": "#687385",
+    "accent": "#4f46e5",
+    "accent_text": "#ffffff",
+    "accent_soft": "#eceafd",
+    "sidebar": "#111827",
+    "sidebar_text": "#c9cfda",
+    "sidebar_active": "#1f2937",
+    "code_bg": "#fbfbfc",
 }
 DARK = {
-    "bg": "#0e1015", "surface": "#161a21", "surface_alt": "#1c212a", "border": "#262c37",
-    "text": "#e6e8ee", "muted": "#98a2b3", "accent": "#7b73ff", "accent_text": "#ffffff",
-    "accent_soft": "#25234a", "sidebar": "#0a0c10", "sidebar_text": "#aeb6c4",
-    "sidebar_active": "#1a1f29", "code_bg": "#12151b",
+    "bg": "#0e1015",
+    "surface": "#161a21",
+    "surface_alt": "#1c212a",
+    "border": "#262c37",
+    "text": "#e6e8ee",
+    "muted": "#98a2b3",
+    "accent": "#7b73ff",
+    "accent_text": "#ffffff",
+    "accent_soft": "#25234a",
+    "sidebar": "#0a0c10",
+    "sidebar_text": "#aeb6c4",
+    "sidebar_active": "#1a1f29",
+    "code_bg": "#12151b",
 }
 
 VERDICT_COLORS = {
@@ -52,12 +71,14 @@ _ICONS = {
 
 def icon(name, color="#8a94a6", size=20):
     body = _ICONS.get(name, _ICONS["file"])
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" '
-           f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{body}</svg>')
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" '
+        f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{body}</svg>'
+    )
     renderer = QSvgRenderer(QByteArray(svg.encode()))
     ratio = 2
     pix = QPixmap(size * ratio, size * ratio)
-    pix.fill(Qt.transparent)
+    pix.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pix)
     renderer.render(painter)
     painter.end()
@@ -71,7 +92,7 @@ def is_dark(preference="system"):
     hints = QGuiApplication.styleHints()
     if hasattr(hints, "colorScheme"):
         return hints.colorScheme() == Qt.ColorScheme.Dark
-    return QGuiApplication.palette().color(QPalette.Window).lightness() < 128
+    return QGuiApplication.palette().color(QPalette.ColorRole.Window).lightness() < 128
 
 
 def colors(preference="system"):
@@ -81,12 +102,15 @@ def colors(preference="system"):
 def _check_image():
     """Qt stylesheets need a file for indicator images; write a white checkmark once."""
     from yemu import paths
+
     path = paths.cache_dir() / "ui" / "check.svg"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" '
-                        'stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
-                        encoding="utf-8")
+        path.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" '
+            'stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
+            encoding="utf-8",
+        )
     return path.as_posix()
 
 
@@ -160,18 +184,18 @@ def apply(app, preference="system"):
     c = colors(preference)
     app.setStyle("Fusion")
     pal = QPalette()
-    pal.setColor(QPalette.Window, QColor(c["bg"]))
-    pal.setColor(QPalette.WindowText, QColor(c["text"]))
-    pal.setColor(QPalette.Base, QColor(c["surface"]))
-    pal.setColor(QPalette.AlternateBase, QColor(c["surface_alt"]))
-    pal.setColor(QPalette.Text, QColor(c["text"]))
-    pal.setColor(QPalette.Button, QColor(c["surface"]))
-    pal.setColor(QPalette.ButtonText, QColor(c["text"]))
-    pal.setColor(QPalette.Highlight, QColor(c["accent"]))
-    pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-    pal.setColor(QPalette.PlaceholderText, QColor(c["muted"]))
-    pal.setColor(QPalette.ToolTipBase, QColor(c["surface"]))
-    pal.setColor(QPalette.ToolTipText, QColor(c["text"]))
+    pal.setColor(QPalette.ColorRole.Window, QColor(c["bg"]))
+    pal.setColor(QPalette.ColorRole.WindowText, QColor(c["text"]))
+    pal.setColor(QPalette.ColorRole.Base, QColor(c["surface"]))
+    pal.setColor(QPalette.ColorRole.AlternateBase, QColor(c["surface_alt"]))
+    pal.setColor(QPalette.ColorRole.Text, QColor(c["text"]))
+    pal.setColor(QPalette.ColorRole.Button, QColor(c["surface"]))
+    pal.setColor(QPalette.ColorRole.ButtonText, QColor(c["text"]))
+    pal.setColor(QPalette.ColorRole.Highlight, QColor(c["accent"]))
+    pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(c["muted"]))
+    pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(c["surface"]))
+    pal.setColor(QPalette.ColorRole.ToolTipText, QColor(c["text"]))
     app.setPalette(pal)
     app.setStyleSheet(stylesheet(c))
     return c

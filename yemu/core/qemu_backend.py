@@ -11,6 +11,7 @@ Networking uses QEMU user-mode (slirp): "user" is NAT (provisioning only),
 "restricted" blocks all traffic leaving the guest (analysis), "none" has no NIC.
 Snapshots are qcow2 internal disk snapshots taken with the VM powered off.
 """
+
 import asyncio
 import json
 import os
@@ -18,13 +19,13 @@ import shutil
 import signal
 import socket
 import subprocess
-import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from yemu import paths
 from yemu.core.qemu_tools import choose_accel, find_binary
-from yemu.core.qga import AgentError, GuestAgent, QMP
+from yemu.core.qga import QMP, AgentError, GuestAgent
 from yemu.core.vm_backend import PROVISION_NETWORK, VMBackend, VMSpec
 
 HOST = "127.0.0.1"
@@ -110,12 +111,13 @@ class QemuBackend(VMBackend):
 
     async def _run_tool(self, *args, timeout=120):
         proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout)
         except asyncio.TimeoutError:
             proc.kill()
-            raise RuntimeError(f"{Path(args[0]).name} timed out")
+            raise RuntimeError(f"{Path(args[0]).name} timed out") from None
         if proc.returncode != 0:
             raise RuntimeError(f"{Path(args[0]).name} {args[1]} failed: {err.decode(errors='replace').strip()}")
         return out.decode(errors="replace")
@@ -142,7 +144,7 @@ class QemuBackend(VMBackend):
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], capture_output=True)
             else:
-                os.kill(pid, signal.SIGKILL)
+                os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
         except (OSError, ProcessLookupError):
             pass
 
@@ -175,9 +177,12 @@ class QemuBackend(VMBackend):
         accel_arg = "whpx,kernel-irqchip=off" if accel == "whpx" else accel
         cmd = [
             self.qemu_system,
-            "-name", vm["name"],
-            "-machine", "q35",
-            "-accel", accel_arg,
+            "-name",
+            vm["name"],
+            "-machine",
+            "q35",
+            "-accel",
+            accel_arg,
         ]
         # WHPX crashes ("Unexpected VP exit code 4") with -cpu max; its default model works
         if accel in ("kvm", "hvf"):
@@ -185,9 +190,12 @@ class QemuBackend(VMBackend):
         elif accel == "tcg":
             cmd += ["-cpu", "max"]
         cmd += [
-            "-m", str(vm["ram_mb"]),
-            "-smp", str(vm["cpus"]),
-            "-drive", f"file={vm['disk_path']},if=virtio,format=qcow2",
+            "-m",
+            str(vm["ram_mb"]),
+            "-smp",
+            str(vm["cpus"]),
+            "-drive",
+            f"file={vm['disk_path']},if=virtio,format=qcow2",
         ]
         for cd in (vm.get("iso_path"), vm.get("cloud_init_path")):
             if cd:
@@ -199,13 +207,20 @@ class QemuBackend(VMBackend):
         else:
             cmd += ["-nic", "none"]
         cmd += [
-            "-chardev", f"socket,id=qga0,host={HOST},port={state['qga_port']},server=on,wait=off",
-            "-device", "virtio-serial-pci",
-            "-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
-            "-qmp", f"tcp:{HOST}:{state['qmp_port']},server=on,wait=off",
-            "-vnc", f"{HOST}:{state['vnc_display']}",
-            "-serial", f"file:{self._vm_dir(vm['name']) / 'console.log'}",
-            "-monitor", "none",
+            "-chardev",
+            f"socket,id=qga0,host={HOST},port={state['qga_port']},server=on,wait=off",
+            "-device",
+            "virtio-serial-pci",
+            "-device",
+            "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
+            "-qmp",
+            f"tcp:{HOST}:{state['qmp_port']},server=on,wait=off",
+            "-vnc",
+            f"{HOST}:{state['vnc_display']}",
+            "-serial",
+            f"file:{self._vm_dir(vm['name']) / 'console.log'}",
+            "-monitor",
+            "none",
         ]
         return cmd + self.extra_args
 
@@ -221,8 +236,12 @@ class QemuBackend(VMBackend):
         if not vm or not self.qemu_img:
             return []
         try:
-            out = subprocess.run([self.qemu_img, "info", "-U", "--output=json", vm["disk_path"]],
-                                 capture_output=True, text=True, timeout=30)
+            out = subprocess.run(
+                [self.qemu_img, "info", "-U", "--output=json", vm["disk_path"]],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
             return [s["name"] for s in json.loads(out.stdout).get("snapshots", [])]
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as e:
             self.logger.error(f"Failed to list snapshots for {vm_name}: {e}")
@@ -255,7 +274,7 @@ class QemuBackend(VMBackend):
         cmd = self.build_command(vm, state)
         self.logger.info(f"Starting QEMU ({self.accel}): {' '.join(cmd)}")
         log = open(vm_dir / "qemu.log", "ab")
-        kwargs = {"stdout": log, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
+        kwargs: dict[str, Any] = {"stdout": log, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         else:
@@ -303,7 +322,7 @@ class QemuBackend(VMBackend):
             await self._run_tool(self.qemu_img, "snapshot", "-a", snapshot_name, vm["disk_path"])
             return True
         except RuntimeError as e:
-            raise RuntimeError(f"Failed to revert to snapshot: {e}")
+            raise RuntimeError(f"Failed to revert to snapshot: {e}") from e
 
     async def create_snapshot(self, vm_name, snapshot_name="clean-baseline", description="Clean state"):
         vm = self._require(vm_name)

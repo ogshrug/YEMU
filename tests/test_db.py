@@ -8,14 +8,23 @@ from yemu.storage.db import SCHEMA_VERSION, Database
 def _legacy_db(path):
     """A database as created by YEMU before schema versioning."""
     c = sqlite3.connect(path)
-    c.execute("CREATE TABLE samples (id INTEGER PRIMARY KEY, sha256 TEXT UNIQUE, md5 TEXT, filename TEXT, "
-              "file_type TEXT, size_bytes INTEGER, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-    c.execute("CREATE TABLE analyses (id INTEGER PRIMARY KEY, sample_id INTEGER, started_at TIMESTAMP, "
-              "finished_at TIMESTAMP, threat_score INTEGER, verdict TEXT, yara_matches TEXT, report_json TEXT)")
-    c.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, analysis_id INTEGER, event_type TEXT, "
-              "timestamp REAL, severity TEXT, details TEXT)")
+    c.execute(
+        "CREATE TABLE samples (id INTEGER PRIMARY KEY, sha256 TEXT UNIQUE, md5 TEXT, filename TEXT, "
+        "file_type TEXT, size_bytes INTEGER, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+    )
+    c.execute(
+        "CREATE TABLE analyses (id INTEGER PRIMARY KEY, sample_id INTEGER, started_at TIMESTAMP, "
+        "finished_at TIMESTAMP, threat_score INTEGER, verdict TEXT, yara_matches TEXT, report_json TEXT)"
+    )
+    c.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, analysis_id INTEGER, event_type TEXT, "
+        "timestamp REAL, severity TEXT, details TEXT)"
+    )
     c.execute("INSERT INTO samples (sha256, filename) VALUES ('abc', 'old.bin')")
-    c.execute("INSERT INTO analyses (sample_id, started_at, finished_at, verdict) VALUES (1, '2026-01-01', '2026-01-01', 'clean')")
+    c.execute(
+        "INSERT INTO analyses (sample_id, started_at, finished_at, verdict) "
+        "VALUES (1, '2026-01-01', '2026-01-01', 'clean')"
+    )
     c.execute("INSERT INTO analyses (sample_id, started_at) VALUES (1, '2026-01-02')")
     c.commit()
     c.close()

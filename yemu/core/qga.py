@@ -4,6 +4,7 @@ Minimal async client for the QEMU guest agent (QGA) and QMP over TCP.
 Each operation opens its own connection, so a client can be used from any event
 loop (GUI worker, CLI, tests) without the loop-binding problems of a shared socket.
 """
+
 import asyncio
 import base64
 import json
@@ -25,12 +26,25 @@ class GuestAgent:
         self.host = host
         self.port = port
         self.timeout = timeout
-        self._reader = None
-        self._writer = None
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+
+    @property
+    def reader(self) -> asyncio.StreamReader:
+        if self._reader is None:
+            raise AgentError("not connected")
+        return self._reader
+
+    @property
+    def writer(self) -> asyncio.StreamWriter:
+        if self._writer is None:
+            raise AgentError("not connected")
+        return self._writer
 
     async def __aenter__(self):
         self._reader, self._writer = await asyncio.wait_for(
-            asyncio.open_connection(self.host, self.port, limit=STREAM_LIMIT), self.timeout)
+            asyncio.open_connection(self.host, self.port, limit=STREAM_LIMIT), self.timeout
+        )
         await self._sync()
         return self
 
@@ -43,8 +57,8 @@ class GuestAgent:
                 pass
 
     async def _send(self, payload):
-        self._writer.write((json.dumps(payload) + "\n").encode())
-        await self._writer.drain()
+        self.writer.write((json.dumps(payload) + "\n").encode())
+        await self.writer.drain()
 
     async def _sync(self):
         # guest-sync-delimited prefixes its reply with 0xFF so stale output from a
@@ -52,8 +66,8 @@ class GuestAgent:
         token = random.randint(1, 2**31)
         await self._send({"execute": "guest-sync-delimited", "arguments": {"id": token}})
         while True:
-            await asyncio.wait_for(self._reader.readuntil(b"\xff"), self.timeout)
-            line = await asyncio.wait_for(self._reader.readline(), self.timeout)
+            await asyncio.wait_for(self.reader.readuntil(b"\xff"), self.timeout)
+            line = await asyncio.wait_for(self.reader.readline(), self.timeout)
             try:
                 if json.loads(line).get("return") == token:
                     return
@@ -68,7 +82,7 @@ class GuestAgent:
         if not expect_reply:
             return None
         while True:
-            line = await asyncio.wait_for(self._reader.readline(), self.timeout)
+            line = await asyncio.wait_for(self.reader.readline(), self.timeout)
             if not line:
                 raise AgentError(f"agent closed connection during {command}")
             line = line.lstrip(b"\xff").strip()
@@ -102,7 +116,9 @@ class GuestAgent:
         try:
             with open(local_path, "rb") as f:
                 while chunk := f.read(chunk_size):
-                    await self.execute("guest-file-write", {"handle": handle, "buf-b64": base64.b64encode(chunk).decode()})
+                    await self.execute(
+                        "guest-file-write", {"handle": handle, "buf-b64": base64.b64encode(chunk).decode()}
+                    )
         finally:
             await self.execute("guest-file-close", {"handle": handle})
 
@@ -132,10 +148,15 @@ class QMP:
         self.timeout = timeout
 
     async def command(self, command, arguments=None):
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(self.host, self.port, limit=STREAM_LIMIT), self.timeout)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(self.host, self.port, limit=STREAM_LIMIT), self.timeout
+        )
         try:
             await asyncio.wait_for(reader.readline(), self.timeout)  # greeting
-            for cmd in ({"execute": "qmp_capabilities"}, {"execute": command, **({"arguments": arguments} if arguments else {})}):
+            for cmd in (
+                {"execute": "qmp_capabilities"},
+                {"execute": command, **({"arguments": arguments} if arguments else {})},
+            ):
                 writer.write((json.dumps(cmd) + "\n").encode())
                 await writer.drain()
                 while True:

@@ -3,6 +3,7 @@ class ThreatScorer:
     Computes a 0-100 threat score based on findings.
     Weights and verdict thresholds come from the [scoring] config section.
     """
+
     DEFAULT_WEIGHTS = {
         "yara_match": 40,
         "yara_many_bonus": 10,
@@ -42,6 +43,8 @@ class ThreatScorer:
         return min(100, score)
 
     def get_verdict(self, score):
-        if score < self.weights["suspicious_threshold"]: return "clean"
-        if score < self.weights["malicious_threshold"]: return "suspicious"
+        if score < self.weights["suspicious_threshold"]:
+            return "clean"
+        if score < self.weights["malicious_threshold"]:
+            return "suspicious"
         return "malicious"

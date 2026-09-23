@@ -1,9 +1,22 @@
 import re
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QFormLayout, QHBoxLayout, QHeaderView, QLineEdit,
-                               QMessageBox, QProgressBar, QSpinBox, QStackedWidget, QTableView, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLineEdit,
+    QMessageBox,
+    QProgressBar,
+    QSpinBox,
+    QStackedWidget,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
 
 from yemu.core.provisioning import provision_vm
 from yemu.gui.widgets import EmptyState, LogView, button, card, label, page_header
@@ -21,31 +34,43 @@ class CreateVMDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(14)
-        lay.addLayout(page_header("New analysis VM", f"Backend: {ctx.backend_label()}. Downloads a cloud image "
-                                  "(cached), installs guest tools over NAT, then locks the VM onto the isolated network."))
+        lay.addLayout(
+            page_header(
+                "New analysis VM",
+                f"Backend: {ctx.backend_label()}. Downloads a cloud image "
+                "(cached), installs guest tools over NAT, then locks the VM onto the isolated network.",
+            )
+        )
         form = QFormLayout()
         form.setHorizontalSpacing(16)
-        self.name = QLineEdit(ctx.config["vm"]["default_vm"] if ctx.config["vm"]["default_vm"] not in ctx.backend.list_vms() else "")
+        self.name = QLineEdit(
+            ctx.config["vm"]["default_vm"] if ctx.config["vm"]["default_vm"] not in ctx.backend.list_vms() else ""
+        )
         self.name.setPlaceholderText("e.g. ubuntu-clean")
         self.distro = QComboBox()
         self.distro.addItems(["ubuntu", "debian"] + (["windows"] if ctx.backend.name == "libvirt" else []))
         self.ram = QSpinBox()
-        self.ram.setButtonSymbols(QSpinBox.NoButtons)
+        self.ram.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.ram.setRange(1024, 65536)
         self.ram.setSingleStep(1024)
         self.ram.setValue(2048)
         self.ram.setSuffix(" MiB")
         self.cpus = QSpinBox()
-        self.cpus.setButtonSymbols(QSpinBox.NoButtons)
+        self.cpus.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.cpus.setRange(1, 32)
         self.cpus.setValue(2)
         self.disk = QSpinBox()
-        self.disk.setButtonSymbols(QSpinBox.NoButtons)
+        self.disk.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.disk.setRange(10, 500)
         self.disk.setValue(20)
         self.disk.setSuffix(" GiB")
-        for text, w in (("Name", self.name), ("Distribution", self.distro), ("Memory", self.ram),
-                        ("CPUs", self.cpus), ("Disk", self.disk)):
+        for text, w in (
+            ("Name", self.name),
+            ("Distribution", self.distro),
+            ("Memory", self.ram),
+            ("CPUs", self.cpus),
+            ("Disk", self.disk),
+        ):
             form.addRow(text, w)
         lay.addLayout(form)
         self.bar = QProgressBar()
@@ -82,10 +107,17 @@ class CreateVMDialog(QDialog):
         self.log.show()
         self.bar.setValue(0)
         cfg = self.ctx.config
-        coro = provision_vm(self.ctx.backend, name, distro=self.distro.currentText(), ram_mb=self.ram.value(),
-                            cpus=self.cpus.value(), disk_gb=self.disk.value(),
-                            analysis_network=cfg["network"]["name"], snapshot_name=cfg["vm"]["default_snapshot"],
-                            progress=self._progress_threadsafe)
+        coro = provision_vm(
+            self.ctx.backend,
+            name,
+            distro=self.distro.currentText(),
+            ram_mb=self.ram.value(),
+            cpus=self.cpus.value(),
+            disk_gb=self.disk.value(),
+            analysis_network=cfg["network"]["name"],
+            snapshot_name=cfg["vm"]["default_snapshot"],
+            progress=self._progress_threadsafe,
+        )
         self.ctx.bridge.call(coro, self._done, self._failed)
 
     def _progress_threadsafe(self, msg, fraction):
@@ -132,8 +164,12 @@ class VMsPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(16)
-        root.addLayout(page_header("Virtual machines",
-                                   "Analysis VMs revert to their clean snapshot before every run and stay on an isolated network."))
+        root.addLayout(
+            page_header(
+                "Virtual machines",
+                "Analysis VMs revert to their clean snapshot before every run and stay on an isolated network.",
+            )
+        )
 
         self.banner, bl = card(horizontal=True)
         self.banner_text = label("", wrap=True)
@@ -159,18 +195,23 @@ class VMsPage(QWidget):
         self.table.setModel(self.model)
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setDefaultSectionSize(34)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.selectionModel().selectionChanged.connect(self._update_buttons)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.table)
-        self.stack.addWidget(EmptyState("vms", "No analysis VMs yet",
-                                        "Click Create VM to build an isolated Ubuntu guest. It takes a few minutes the first time."))
+        self.stack.addWidget(
+            EmptyState(
+                "vms",
+                "No analysis VMs yet",
+                "Click Create VM to build an isolated Ubuntu guest. It takes a few minutes the first time.",
+            )
+        )
         root.addWidget(self.stack, 1)
 
         self.create_btn.clicked.connect(self._create)
@@ -194,29 +235,43 @@ class VMsPage(QWidget):
         self.start_btn.setEnabled(bool(name) and real and state != "running")
         self.stop_btn.setEnabled(bool(name) and real and state != "stopped")
         self.console_btn.setEnabled(bool(name) and real)
-        self.delete_btn.setEnabled(bool(name) and hasattr(self.ctx.backend, "delete_vm") and not self.ctx.analysis_running)
+        self.delete_btn.setEnabled(
+            bool(name) and hasattr(self.ctx.backend, "delete_vm") and not self.ctx.analysis_running
+        )
 
     def refresh(self):
         b = self.ctx.backend
         if b.name == "mock":
-            self.banner_text.setText("<b>Mock mode.</b> No hypervisor was found, so VMs below are simulated. "
-                                     "Install QEMU (Windows/Linux) or libvirt (Linux), then pick a backend in Settings.")
+            self.banner_text.setText(
+                "<b>Mock mode.</b> No hypervisor was found, so VMs below are simulated. "
+                "Install QEMU (Windows/Linux) or libvirt (Linux), then pick a backend in Settings."
+            )
         elif b.name == "qemu":
             accel = b.accel
-            speed = "hardware accelerated" if accel != "tcg" else "<b>software emulation (slow)</b>: enable WHPX/KVM for speed"
-            self.banner_text.setText(f"<b>QEMU backend</b> · {accel}, {speed}. Analysis network: user-mode with "
-                                     "<code>restrict=on</code> (no outside access).")
+            speed = (
+                "hardware accelerated"
+                if accel != "tcg"
+                else "<b>software emulation (slow)</b>: enable WHPX/KVM for speed"
+            )
+            self.banner_text.setText(
+                f"<b>QEMU backend</b> · {accel}, {speed}. Analysis network: user-mode with "
+                "<code>restrict=on</code> (no outside access)."
+            )
         else:
-            self.banner_text.setText(f"<b>libvirt backend</b> · isolated network <code>{self.ctx.config['network']['name']}</code>.")
+            self.banner_text.setText(
+                f"<b>libvirt backend</b> · isolated network <code>{self.ctx.config['network']['name']}</code>."
+            )
 
         async def collect():
             import asyncio
+
             vms = await asyncio.to_thread(b.list_vms)
             rows = []
             for vm in sorted(vms):
                 snaps = await asyncio.to_thread(b.list_snapshots, vm)
                 rows.append((vm, await b.vm_state(vm), snaps))
             return rows
+
         self.ctx.bridge.call(collect(), self._populate, lambda e: self.ctx.log(f"Could not list VMs: {e}", "WARN"))
 
     def _populate(self, rows):
@@ -225,8 +280,14 @@ class VMsPage(QWidget):
         for name, state, snaps in rows:
             st = QStandardItem(state)
             st.setForeground(QColor(STATE_COLORS.get(state, "#6b7280")))
-            self.model.appendRow([QStandardItem(name), st, QStandardItem(", ".join(snaps) or "none (not ready)"),
-                                  QStandardItem(self.ctx.backend.name)])
+            self.model.appendRow(
+                [
+                    QStandardItem(name),
+                    st,
+                    QStandardItem(", ".join(snaps) or "none (not ready)"),
+                    QStandardItem(self.ctx.backend.name),
+                ]
+            )
         self.stack.setCurrentIndex(0 if rows else 1)
         for r in range(self.model.rowCount()):
             if self.model.item(r, 0).text() == selected:
@@ -242,20 +303,26 @@ class VMsPage(QWidget):
         if not name:
             return
         b = self.ctx.backend
-        coro = {"start": lambda: b.start_vm(name), "stop": lambda: b.stop_vm(name), "console": None}[action]
-        if action == "console":
-            async def console():
-                if await b.vm_state(name) != "running":
-                    await b.start_vm(name)
-                return await b.open_gui(name)
-            coro = console
-        self.ctx.bridge.call(coro(), lambda _: self.refresh(),
-                             lambda e: QMessageBox.warning(self, "YEMU", f"{action.capitalize()} failed: {e}"))
+
+        async def console():
+            if await b.vm_state(name) != "running":
+                await b.start_vm(name)
+            return await b.open_gui(name)
+
+        actions = {"start": lambda: b.start_vm(name), "stop": lambda: b.stop_vm(name), "console": console}
+        self.ctx.bridge.call(
+            actions[action](),
+            lambda _: self.refresh(),
+            lambda e: QMessageBox.warning(self, "YEMU", f"{action.capitalize()} failed: {e}"),
+        )
 
     def _delete(self):
         name = self._selected()
         if not name:
             return
-        if QMessageBox.question(self, "Delete VM", f"Delete '{name}' and its disk? This cannot be undone.") != QMessageBox.Yes:
+        if (
+            QMessageBox.question(self, "Delete VM", f"Delete '{name}' and its disk? This cannot be undone.")
+            != QMessageBox.StandardButton.Yes
+        ):
             return
         self.ctx.bridge.call(self.ctx.backend.delete_vm(name), lambda _: self.refresh())

@@ -81,7 +81,9 @@ async def test_oversized_sample_rejected(db, tmp_path):
 @pytest.mark.asyncio
 async def test_timeout_marks_status_and_powers_off(db, tmp_path):
     vm = RecordingMock(hang_exec=True)
-    aid = await Orchestrator(db, vm_manager=vm, config=_cfg(timeout=1)).run_analysis(_sample(tmp_path), guest_os="mock-ubuntu")
+    aid = await Orchestrator(db, vm_manager=vm, config=_cfg(timeout=1)).run_analysis(
+        _sample(tmp_path), guest_os="mock-ubuntu"
+    )
     details = await db.get_analysis_details(aid)
     assert details["status"] == "timeout"
     assert vm.stopped >= 1
@@ -102,7 +104,9 @@ async def test_guest_paths_are_quoted_and_listing_is_filtered(db, tmp_path):
 
 @pytest.mark.asyncio
 async def test_completed_run_records_scoring_reasons(db, tmp_path):
-    aid = await Orchestrator(db, vm_manager=RecordingMock(), config=_cfg()).run_analysis(_sample(tmp_path), guest_os="mock-ubuntu")
+    aid = await Orchestrator(db, vm_manager=RecordingMock(), config=_cfg()).run_analysis(
+        _sample(tmp_path), guest_os="mock-ubuntu"
+    )
     details = await db.get_analysis_details(aid)
     assert details["status"] == "completed"
     scoring = json.loads(details["scoring"])

@@ -33,6 +33,7 @@ def gui(qapp, tmp_path):
     cfg["analysis"]["execution_wait"] = 0
     yemu_config.save(cfg)
     from yemu.gui.app import create_window
+
     ctx, win = create_window(qapp)
     assert pump(qapp, lambda: ctx.db_ready)
     yield qapp, ctx, win

@@ -1,14 +1,39 @@
 import json
+from typing import Any
 
 from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView,
-                               QLineEdit, QMessageBox, QPlainTextEdit, QTableView, QTabWidget,
-                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QTableView,
+    QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from yemu.core.report_model import build_report
 from yemu.gui import theme
-from yemu.gui.widgets import ScoreGauge, StatCard, VerdictBadge, button, card, human_size, human_time, label
+from yemu.gui.widgets import (
+    ScoreGauge,
+    StatCard,
+    VerdictBadge,
+    button,
+    card,
+    human_size,
+    human_time,
+    label,
+    show_status,
+)
 
 
 class _EventFilter(QSortFilterProxyModel):
@@ -43,12 +68,12 @@ def _table(headers, stretch_col):
     view.setSortingEnabled(True)
     view.setAlternatingRowColors(True)
     view.setShowGrid(False)
-    view.setSelectionBehavior(QAbstractItemView.SelectRows)
-    view.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     view.verticalHeader().hide()
     view.verticalHeader().setDefaultSectionSize(28)
-    view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-    view.horizontalHeader().setSectionResizeMode(stretch_col, QHeaderView.Stretch)
+    view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    view.horizontalHeader().setSectionResizeMode(stretch_col, QHeaderView.ResizeMode.Stretch)
     return model, proxy, view
 
 
@@ -64,7 +89,7 @@ def _clock(ts):
 
 def _item(value):
     it = QStandardItem()
-    it.setData(value, Qt.DisplayRole)
+    it.setData(value, Qt.ItemDataRole.DisplayRole)
     return it
 
 
@@ -76,7 +101,7 @@ class ReportPage(QWidget):
         self.setObjectName("Page")
         self.ctx = ctx
         self.report = None
-        self.raw = (None, [])
+        self.raw: tuple[Any, list] = (None, [])
 
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 20, 28, 24)
@@ -151,13 +176,13 @@ class ReportPage(QWidget):
         self.findings = QTreeWidget()
         self.findings.setHeaderLabels(["Finding", "Detail"])
         self.findings.setRootIsDecorated(False)
-        self.findings.header().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.findings.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.findings.setMaximumHeight(170)
         ovl.addWidget(self.findings)
         ovl.addWidget(label("Process tree", "SectionTitle"))
         self.proc_tree = QTreeWidget()
         self.proc_tree.setHeaderLabels(["Process", "PID", "Command line"])
-        self.proc_tree.header().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.proc_tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         ovl.addWidget(self.proc_tree, 1)
         self.errors = label("", wrap=True)
         self.errors.setStyleSheet(f"color: {theme.VERDICT_COLORS['malicious']};")
@@ -167,7 +192,7 @@ class ReportPage(QWidget):
         # YARA
         self.yara_tree = QTreeWidget()
         self.yara_tree.setHeaderLabels(["Rule / string", "Source", "Details"])
-        self.yara_tree.header().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.yara_tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.tabs.addTab(self.yara_tree, "YARA")
 
         # Behaviour
@@ -202,10 +227,16 @@ class ReportPage(QWidget):
     # --- loading ---
     def load(self, analysis_id):
         async def fetch():
-            return (await self.ctx.db.get_analysis_details(analysis_id),
-                    await self.ctx.db.get_analysis_events(analysis_id))
-        self.ctx.bridge.call(fetch(), self._show,
-                             lambda e: QMessageBox.warning(self, "YEMU", f"Could not load analysis #{analysis_id}: {e}"))
+            return (
+                await self.ctx.db.get_analysis_details(analysis_id),
+                await self.ctx.db.get_analysis_events(analysis_id),
+            )
+
+        self.ctx.bridge.call(
+            fetch(),
+            self._show,
+            lambda e: QMessageBox.warning(self, "YEMU", f"Could not load analysis #{analysis_id}: {e}"),
+        )
 
     def _show(self, result):
         details, events = result
@@ -232,10 +263,12 @@ class ReportPage(QWidget):
         self._fill_findings(r)
         if r["status"] in ("failed", "timeout", "interrupted", "running"):
             color = theme.VERDICT_COLORS["suspicious" if r["status"] in ("interrupted", "running") else "malicious"]
-            self.status_banner.setText(f"<b>Analysis {r['status']}.</b> {r['error'] or ''} "
-                                       "The verdict below may be based on partial results.")
-            self.status_banner.setStyleSheet(f"QLabel {{ color: {color}; border: 1px solid {color}; border-radius: 8px;"
-                                             f" padding: 8px 12px; }}")
+            self.status_banner.setText(
+                f"<b>Analysis {r['status']}.</b> {r['error'] or ''} The verdict below may be based on partial results."
+            )
+            self.status_banner.setStyleSheet(
+                f"QLabel {{ color: {color}; border: 1px solid {color}; border-radius: 8px; padding: 8px 12px; }}"
+            )
             self.status_banner.show()
         else:
             self.status_banner.hide()
@@ -245,18 +278,21 @@ class ReportPage(QWidget):
         self.b_model.removeRows(0, self.b_model.rowCount())
         for e in r["behaviour"]:
             t = _item(_clock(e["timestamp"]))
-            self.b_model.appendRow([t, _item(e["type"]), _item(str(e["pid"])), _item(e["process"]), _item(e["description"])])
+            self.b_model.appendRow(
+                [t, _item(e["type"]), _item(str(e["pid"])), _item(e["process"]), _item(e["description"])]
+            )
         self.n_model.removeRows(0, self.n_model.rowCount())
         for ioc in r["iocs"]:
             self.n_model.appendRow([_item(ioc["type"]), _item(ioc["value"]), _item(ioc["source"])])
-        self.b_view.sortByColumn(0, Qt.AscendingOrder)
-        self.raw_view.setPlainText(json.dumps({k: v for k, v in r.items() if k not in ("raw_details",)},
-                                              indent=2, default=str))
+        self.b_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self.raw_view.setPlainText(
+            json.dumps({k: v for k, v in r.items() if k not in ("raw_details",)}, indent=2, default=str)
+        )
         self.tabs.setCurrentIndex(0)
 
     def _fill_process_tree(self, processes):
         self.proc_tree.clear()
-        by_pid = {}
+        by_pid: dict[str, dict] = {}
         for p in processes:
             by_pid.setdefault(str(p["pid"]), p)
         items = {}
@@ -265,14 +301,21 @@ class ReportPage(QWidget):
             items[pid] = it
         for pid, p in by_pid.items():
             parent = items.get(str(p["ppid"]))
-            (parent.addChild(items[pid]) if parent and parent is not items[pid] else self.proc_tree.addTopLevelItem(items[pid]))
+            (
+                parent.addChild(items[pid])
+                if parent and parent is not items[pid]
+                else self.proc_tree.addTopLevelItem(items[pid])
+            )
         self.proc_tree.expandAll()
         self.proc_tree.resizeColumnToContents(0)
 
     def _fill_findings(self, r):
         self.findings.clear()
-        colors = {"persistence": theme.VERDICT_COLORS["malicious"], "network": theme.VERDICT_COLORS["malicious"],
-                  "suspicious": theme.VERDICT_COLORS["suspicious"]}
+        colors = {
+            "persistence": theme.VERDICT_COLORS["malicious"],
+            "network": theme.VERDICT_COLORS["malicious"],
+            "suspicious": theme.VERDICT_COLORS["suspicious"],
+        }
         rows = [("yara", f"{m.get('rule')} ({m.get('source', '?')})") for m in r["yara_matches"]]
         rows += [(f["kind"], f["text"]) for f in r["findings"]]
         if not rows:
@@ -299,9 +342,17 @@ class ReportPage(QWidget):
             if m.get("tags"):
                 top.addChild(QTreeWidgetItem(["tags", "", ", ".join(m["tags"])]))
             if m.get("source") == "memory":
-                top.addChild(QTreeWidgetItem(["process", f"PID {m.get('pid')}", f"{m.get('exe_path', '')} {m.get('cmdline', '')}"]))
+                top.addChild(
+                    QTreeWidgetItem(
+                        ["process", f"PID {m.get('pid')}", f"{m.get('exe_path', '')} {m.get('cmdline', '')}"]
+                    )
+                )
             for s in m.get("strings", [])[:50]:
-                top.addChild(QTreeWidgetItem([s.get("identifier", ""), s.get("offset", ""), s.get("printable") or s.get("data", "")]))
+                top.addChild(
+                    QTreeWidgetItem(
+                        [s.get("identifier", ""), s.get("offset", ""), s.get("printable") or s.get("data", "")]
+                    )
+                )
             self.yara_tree.addTopLevelItem(top)
         self.yara_tree.expandToDepth(0)
         self.yara_tree.resizeColumnToContents(0)
@@ -314,11 +365,13 @@ class ReportPage(QWidget):
     def _export_json(self):
         if not self.report:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export JSON", f"yemu_report_{self.report['id']}.json", "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export JSON", f"yemu_report_{self.report['id']}.json", "JSON (*.json)"
+        )
         if path:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({k: v for k, v in self.report.items() if k != "raw_details"}, f, indent=2, default=str)
-            self.window().statusBar().showMessage(f"Saved {path}", 5000)
+            show_status(self, f"Saved {path}", 5000)
 
     def _export_pdf(self):
         if not self.report:
@@ -329,12 +382,13 @@ class ReportPage(QWidget):
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
         from yemu.core.report_generator import PDFGenerator
+
         details, events = self.raw
         self.export_pdf.setEnabled(False)
 
         def done(_):
             self.export_pdf.setEnabled(True)
-            self.window().statusBar().showMessage(f"PDF saved to {path}", 5000)
+            show_status(self, f"PDF saved to {path}", 5000)
 
         def failed(e):
             self.export_pdf.setEnabled(True)

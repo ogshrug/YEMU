@@ -1,5 +1,6 @@
-import json
 import inspect
+import json
+
 import pytest
 
 from yemu import config as yemu_config
@@ -21,7 +22,8 @@ def test_paths_live_under_yemu_home(isolated_yemu_home):
 def test_config_defaults_and_overrides(isolated_yemu_home):
     assert yemu_config.load()["vm"]["backend"] == "auto"
     paths.config_file().write_text(
-        '[vm]\nbackend = "mock"\n[scoring]\nmalicious_threshold = 50\n[bogus]\nx = 1\n', encoding="utf-8")
+        '[vm]\nbackend = "mock"\n[scoring]\nmalicious_threshold = 50\n[bogus]\nx = 1\n', encoding="utf-8"
+    )
     cfg = yemu_config.load()
     assert cfg["vm"]["backend"] == "mock"
     assert cfg["vm"]["default_snapshot"] == "clean-baseline"  # untouched defaults survive
@@ -49,7 +51,7 @@ def test_backends_implement_full_interface(cls):
             continue
         base_sig = inspect.signature(member)
         impl_sig = inspect.signature(getattr(cls, name))
-        assert list(impl_sig.parameters)[:len(base_sig.parameters)] == list(base_sig.parameters), name
+        assert list(impl_sig.parameters)[: len(base_sig.parameters)] == list(base_sig.parameters), name
 
 
 def test_create_backend():

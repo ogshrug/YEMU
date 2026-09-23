@@ -3,10 +3,10 @@ The contract every hypervisor backend implements. The orchestrator and UI only t
 to this interface, so adding a backend (e.g. Hyper-V on Windows) means adding one
 subclass and registering it in create_backend().
 """
+
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 
 PROVISION_NETWORK = "yemu-provision"
 
@@ -14,16 +14,17 @@ PROVISION_NETWORK = "yemu-provision"
 @dataclass
 class VMSpec:
     """Backend-neutral VM definition; each backend renders it (libvirt XML, QEMU argv...)."""
+
     name: str
     disk_path: str
     ram_mb: int = 2048
     cpus: int = 2
     network: str = "malware-analysis"
     os_type: str = "linux"
-    iso_path: Optional[str] = None
-    cloud_init_path: Optional[str] = None
-    virtio_win_path: Optional[str] = None
-    windows_auto_path: Optional[str] = None
+    iso_path: str | None = None
+    cloud_init_path: str | None = None
+    virtio_win_path: str | None = None
+    windows_auto_path: str | None = None
 
 
 class VMBackend(ABC):
@@ -104,6 +105,7 @@ class VMBackend(ABC):
     def vm_disk_path(self, vm_name):
         """Where provisioning should put this VM's disk."""
         from yemu import paths
+
         return str(paths.vm_storage_dir() / f"{vm_name}.qcow2")
 
     @abstractmethod
@@ -120,9 +122,10 @@ def create_backend(name="auto", ui_callback=None, config=None):
     (Windows/Linux), then the mock backend, so the UI and CLI stay usable anywhere.
     """
     import os
+
     from yemu import config as yemu_config
-    from yemu.core.vm_manager import VMManager, MockVMManager
     from yemu.core.qemu_backend import QemuBackend
+    from yemu.core.vm_manager import MockVMManager, VMManager
 
     logger = logging.getLogger(__name__)
     config = config or yemu_config.load()
