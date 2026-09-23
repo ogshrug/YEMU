@@ -5,7 +5,7 @@ import shutil
 import json
 import io
 import zipfile
-from core.yara_sync import YaraRuleSync
+from yemu.core.yara_sync import YaraRuleSync
 
 class TestYaraRuleSync(unittest.TestCase):
     def setUp(self):

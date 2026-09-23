@@ -1,7 +1,7 @@
 import asyncio
 import pytest
-from core.threat_scorer import ThreatScorer
-from core.yara_engine import YaraEngine
+from yemu.core.threat_scorer import ThreatScorer
+from yemu.core.yara_engine import YaraEngine
 import os
 import shutil
 
@@ -53,8 +53,8 @@ if 'gi' not in sys.modules:
 
 @pytest.mark.asyncio
 async def test_analysis_pipeline_resilience():
-    from core.orchestrator import Orchestrator
-    from storage.db import Database
+    from yemu.core.orchestrator import Orchestrator
+    from yemu.storage.db import Database
 
     class FailingVMManager:
         def __init__(self, ui_callback=None):

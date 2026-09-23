@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 import threading
 import json
-from core.yara_sync import YaraRuleSync
+from yemu.core.yara_sync import YaraRuleSync
+from yemu import config as yemu_config
+from yemu import paths
 
 class YaraEditor(Gtk.Box):
     def __init__(self, **kwargs):
@@ -17,8 +19,8 @@ class YaraEditor(Gtk.Box):
         self.set_margin_top(20)
         self.set_margin_bottom(20)
 
-        self.rules_dir = Path("rules/yara-rules")
-        self.rules_dir.mkdir(parents=True, exist_ok=True)
+        self.rules_dir = paths.synced_rules_dir()
+        rules_cfg = yemu_config.load()["rules"]
         self.current_file = None
 
         # Sync UI
@@ -27,12 +29,12 @@ class YaraEditor(Gtk.Box):
         self.append(sync_box)
 
         sync_box.append(Gtk.Label(label="Repo URL:"))
-        self.repo_entry = Gtk.Entry(text="https://github.com/Yara-Rules/rules")
+        self.repo_entry = Gtk.Entry(text=rules_cfg["repo_url"])
         self.repo_entry.set_hexpand(True)
         sync_box.append(self.repo_entry)
 
         sync_box.append(Gtk.Label(label="Branch:"))
-        self.branch_entry = Gtk.Entry(text="master")
+        self.branch_entry = Gtk.Entry(text=rules_cfg["branch"])
         self.branch_entry.set_width_chars(10)
         sync_box.append(self.branch_entry)
 
@@ -109,7 +111,7 @@ class YaraEditor(Gtk.Box):
         manifest_path = self.rules_dir / ".sync_manifest.json"
         if manifest_path.exists():
             try:
-                with manifest_path.open('r') as f:
+                with manifest_path.open('r', encoding='utf-8') as f:
                     data = json.load(f)
                     ts = data.get('timestamp', 'Unknown')
                     count = data.get('file_count', 0)
@@ -140,7 +142,7 @@ class YaraEditor(Gtk.Box):
         import threading
         def run_load():
             try:
-                with path.open("r", errors='ignore') as f:
+                with path.open("r", encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                     GLib.idle_add(self._display_file, content, rel_path)
             except Exception as e:
@@ -175,7 +177,7 @@ class YaraEditor(Gtk.Box):
         import threading
         def run_save():
             try:
-                with path.open("w") as f:
+                with path.open("w", encoding='utf-8') as f:
                     f.write(content)
                 GLib.idle_add(self._on_save_complete, filename)
             except Exception as e:

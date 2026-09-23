@@ -108,7 +108,7 @@ class ReportView(Gtk.Box):
 
             def run_export():
                 try:
-                    from core.report_generator import PDFGenerator
+                    from yemu.core.report_generator import PDFGenerator
                     gen = PDFGenerator(path)
                     gen.generate(self.current_details, self.current_events)
                     GLib.idle_add(self._show_export_result, f"PDF saved to {path}", False)

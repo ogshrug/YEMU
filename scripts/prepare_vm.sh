@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Legacy Linux-only VM preparation (zenity UI). The app uses yemu/ui/prepare_vm_gui.py;
+# this script is kept for headless/scripted setups and follows the same network model.
 set -euo pipefail
 
 VM_NAME=""

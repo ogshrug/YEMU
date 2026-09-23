@@ -2,8 +2,8 @@
 import asyncio
 import pytest
 import logging
-from core.vm_manager import VMManager, MockVMManager
-from core.orchestrator import Orchestrator
+from yemu.core.vm_manager import VMManager, MockVMManager
+from yemu.core.orchestrator import Orchestrator
 import libvirt
 
 @pytest.mark.asyncio

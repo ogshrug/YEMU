@@ -10,12 +10,14 @@ try:
 except ImportError:
     yara = None
 
-# Rules shipped with the repo; always loaded so a fresh install is never rule-less
-BUILTIN_RULES = Path(__file__).resolve().parent.parent / "rules" / "default.yar"
+from yemu import paths
+
+# Rules shipped with the package; always loaded so a fresh install is never rule-less
+BUILTIN_RULES = paths.BUILTIN_RULES_FILE
 
 class YaraEngine:
-    def __init__(self, rules_dir="rules/yara-rules", builtin_rules=BUILTIN_RULES):
-        self.rules_dir = Path(rules_dir)
+    def __init__(self, rules_dir=None, builtin_rules=BUILTIN_RULES):
+        self.rules_dir = Path(rules_dir) if rules_dir else paths.synced_rules_dir()
         self.builtin_rules = Path(builtin_rules) if builtin_rules else None
         self.rules = None
         self.logger = logging.getLogger(__name__)

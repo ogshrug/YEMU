@@ -9,9 +9,12 @@ import sys
 import logging
 import zipfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from core.vm_provisioner import VMProvisioner
-from core.vm_manager import VMManager
+from yemu.core.vm_provisioner import VMProvisioner
+from yemu.core.vm_manager import VMManager
+from yemu import config as yemu_config
+from yemu import paths
+
+PROVISION_NETWORK = "yemu-provision"
 
 class VMPrepareWindow(Gtk.Window):
     def __init__(self, parent=None, **kwargs):
@@ -20,6 +23,7 @@ class VMPrepareWindow(Gtk.Window):
 
         self.provisioner = VMProvisioner()
         self.manager = VMManager()
+        self.analysis_network = yemu_config.load()["network"]["name"]
         self.logger = logging.getLogger("VMPrepare")
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
@@ -116,9 +120,13 @@ class VMPrepareWindow(Gtk.Window):
         GLib.idle_add(self.progress_bar.set_fraction, 0.05)
 
         try:
-            GLib.idle_add(self._append_log, "Ensuring isolated network exists...")
-            if not await self.manager.ensure_network():
+            # Guest tools are installed over a NAT network; analysis happens on the isolated one
+            GLib.idle_add(self._append_log, f"Ensuring isolated network '{self.analysis_network}' exists...")
+            if not await self.manager.ensure_network(self.analysis_network, nat=False):
                 raise RuntimeError("Failed to ensure isolated network.")
+            GLib.idle_add(self._append_log, f"Ensuring provisioning network '{PROVISION_NETWORK}' (NAT) exists...")
+            if not await self.manager.ensure_network(PROVISION_NETWORK, nat=True):
+                raise RuntimeError("Failed to ensure provisioning network.")
             GLib.idle_add(self.progress_bar.set_fraction, 0.1)
 
             GLib.idle_add(self._append_log, f"Downloading {distro} image and tools...")
@@ -147,7 +155,7 @@ class VMPrepareWindow(Gtk.Window):
             GLib.idle_add(self.progress_bar.set_fraction, 0.4)
 
             GLib.idle_add(self._append_log, "Creating VM disk image...")
-            disk_path = f"/var/lib/libvirt/images/{vm_name}.qcow2"
+            disk_path = str(paths.vm_storage_dir() / f"{vm_name}.qcow2")
             backing = os.path.abspath(image_path) if image_path and distro in ["ubuntu", "debian"] else None
             actual_disk_path = await self.manager.create_disk(disk_path, disk_size, backing_file=backing)
             if not actual_disk_path:
@@ -161,7 +169,8 @@ class VMPrepareWindow(Gtk.Window):
                 cloud_init_path=cloud_init_path,
                 virtio_win_path=virtio_win_path,
                 windows_auto_path=windows_auto_path,
-                iso_path=image_path if distro == "windows" else None
+                iso_path=image_path if distro == "windows" else None,
+                network_name=PROVISION_NETWORK
             )
             if not await self.manager.define_vm(xml, vm_name):
                 raise RuntimeError("Failed to define VM.")
@@ -188,6 +197,15 @@ class VMPrepareWindow(Gtk.Window):
             if distro in ["ubuntu", "debian"]:
                 await self.manager.run_command(vm_name, "apt-get update && apt-get install -y strace tcpdump")
 
+            GLib.idle_add(self._append_log, f"Moving VM onto isolated network '{self.analysis_network}'...")
+            GLib.idle_add(self.progress_bar.set_fraction, 0.85)
+            if not await self.manager.switch_network(vm_name, PROVISION_NETWORK, self.analysis_network):
+                raise RuntimeError("Failed to move VM onto the isolated network.")
+            if not await self.manager.start_vm(vm_name):
+                raise RuntimeError("Failed to restart VM on the isolated network.")
+            if not await self.manager.wait_for_guest_agent(vm_name, timeout=300):
+                raise RuntimeError("Guest agent timeout after network switch.")
+
             GLib.idle_add(self._append_log, "Taking 'clean-baseline' snapshot...")
             GLib.idle_add(self.progress_bar.set_fraction, 0.9)
             if not await self.manager.create_snapshot(vm_name, "clean-baseline", "Automated baseline"):
@@ -203,7 +221,7 @@ class VMPrepareWindow(Gtk.Window):
 
 
 def main():
-    app = Adw.Application(application_id="org.gpcssi.vmprep")
+    app = Adw.Application(application_id="io.github.ogshrug.YEMU.PrepareVM")
 
     def on_activate(app):
         win = VMPrepareWindow(application=app)

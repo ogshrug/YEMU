@@ -7,6 +7,8 @@ import subprocess
 import shutil
 import secrets
 
+from yemu import paths
+
 class VMProvisioner:
     DISTROS = {
         "ubuntu": "https://releases.ubuntu.com/24.04/ubuntu-24.04.1-live-server-amd64.iso",
@@ -24,24 +26,7 @@ class VMProvisioner:
     PROCMON_URL = "https://download.sysinternals.com/files/ProcessMonitor.zip"
 
     def __init__(self, download_dir=None):
-        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        if not download_dir:
-            download_dir = os.path.join(root, "assets", "iso")
-            if not os.path.exists(download_dir):
-                try:
-                    os.makedirs(download_dir, exist_ok=True)
-                except PermissionError:
-                    download_dir = os.path.join("/var/tmp", "gpcssi-assets")
-                    os.makedirs(download_dir, exist_ok=True)
-            else:
-                test_file = os.path.join(download_dir, ".write_test")
-                try:
-                    with open(test_file, "w") as f:
-                        f.write("test")
-                    os.remove(test_file)
-                except (PermissionError, OSError):
-                    download_dir = os.path.join("/var/tmp", "gpcssi-assets")
-                    os.makedirs(download_dir, exist_ok=True)
+        download_dir = str(download_dir or paths.images_dir())
         self.download_dir = download_dir
         self.logger = logging.getLogger(__name__)
         # Per-provisioner random guest password instead of a hard-coded one
@@ -101,9 +86,9 @@ class VMProvisioner:
         with tempfile.TemporaryDirectory() as tmpdir:
             user_data_path = os.path.join(tmpdir, "user-data")
             meta_data_path = os.path.join(tmpdir, "meta-data")
-            with open(user_data_path, "w") as f:
+            with open(user_data_path, "w", encoding="utf-8") as f:
                 f.write("#cloud-config\n" + user_data_content)
-            with open(meta_data_path, "w") as f:
+            with open(meta_data_path, "w", encoding="utf-8") as f:
                 f.write(f"instance-id: {vm_name}\nlocal-hostname: {vm_name}\n")
             iso_path = os.path.join(tmpdir, f"{vm_name}-cloud-init.iso")
             cmd = [mkisofs, "-output", iso_path, "-volid", "cidata", "-joliet", "-rock", user_data_path, meta_data_path]
@@ -123,10 +108,7 @@ class VMProvisioner:
                 try:
                     os.remove(out_path)
                 except PermissionError:
-                    out_path = os.path.join(
-                        os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
-                        "gpcssi", f"{vm_name}-cloud-init.iso"
-                    )
+                    out_path = os.path.join(str(paths.vm_storage_dir()), f"{vm_name}-cloud-init.iso")
                     os.makedirs(os.path.dirname(out_path), exist_ok=True)
             shutil.move(iso_path, out_path)
             os.chmod(out_path, 0o644)
@@ -137,7 +119,7 @@ class VMProvisioner:
         xml_content = self.generate_autounattend_xml()
         with tempfile.TemporaryDirectory() as tmpdir:
             xml_path = os.path.join(tmpdir, "Autounattend.xml")
-            with open(xml_path, "w") as f:
+            with open(xml_path, "w", encoding="utf-8") as f:
                 f.write(xml_content)
             tmp_iso = os.path.join(tmpdir, f"{vm_name}-windows-auto.iso")
             cmd = [mkisofs, "-output", tmp_iso, "-volid", "OEMDRIVERS", "-joliet", "-rock", xml_path]
@@ -283,7 +265,7 @@ class VMProvisioner:
 </unattend>
 """.replace("{password}", self.guest_password)
 
-    def get_libvirt_xml(self, vm_name, ram_mb=2048, cpu_count=2, disk_path=None, iso_path=None, cloud_init_path=None, virtio_win_path=None, windows_auto_path=None):
+    def get_libvirt_xml(self, vm_name, ram_mb=2048, cpu_count=2, disk_path=None, iso_path=None, cloud_init_path=None, virtio_win_path=None, windows_auto_path=None, network_name="malware-analysis"):
         allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
         if not vm_name or any(c not in allowed for c in vm_name):
             raise ValueError("vm_name contains invalid characters")
@@ -330,7 +312,7 @@ class VMProvisioner:
           <devices>
             {devices_xml}
             <interface type='network'>
-              <source network='malware-analysis'/>
+              <source network='{network_name}'/>
               <model type='virtio'/>
             </interface>
             <channel type='unix'>

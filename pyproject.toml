@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yemu"
+dynamic = ["version"]
+description = "YEMU: local malware analysis sandbox (QEMU/KVM + YARA + behavioural monitoring)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Armaan Guha", email = "armaanguha@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Security",
+]
+# Cross-platform core: CLI, YARA, reports, mock backend
+dependencies = [
+    "yara-python>=4.3",
+    "aiosqlite>=0.19",
+    "reportlab>=4.0",
+    "requests>=2.31",
+    "scapy>=2.5",
+    "platformdirs>=3.0",
+    "PyYAML>=6.0",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# Linux host: real VMs + desktop app. PyGObject/libvirt are usually taken from the
+# distro (python3-gi, python3-libvirt) via `python3 -m venv --system-site-packages`.
+linux = [
+    "libvirt-python>=9.0; sys_platform == 'linux'",
+    "PyGObject>=3.46; sys_platform == 'linux'",
+]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+yemu = "yemu.cli:main"
+
+[project.gui-scripts]
+yemu-gui = "yemu.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "yemu.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["yemu*"]
+
+[tool.setuptools.package-data]
+yemu = ["rules/*.yar"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"

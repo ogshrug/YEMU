@@ -2,13 +2,17 @@ import asyncio
 import hashlib
 import logging
 import os
+import tempfile
 from datetime import datetime
-from core.vm_manager import VMManager
+from yemu import config as yemu_config
+from yemu import paths
+from yemu.core.vm_backend import create_backend
 
 class Orchestrator:
-    def __init__(self, db, vm_manager=None, ui_callback=None):
+    def __init__(self, db, vm_manager=None, ui_callback=None, config=None):
         self.db = db
-        self.vm_manager = vm_manager or VMManager(ui_callback=ui_callback)
+        self.config = config or yemu_config.load()
+        self.vm_manager = vm_manager or create_backend(self.config["vm"]["backend"], ui_callback=ui_callback)
         self.logger = logging.getLogger(__name__)
         self.ui_callback = ui_callback
 
@@ -31,8 +35,8 @@ class Orchestrator:
 
         # 0. Static Analysis
         try:
-            from core.yara_engine import YaraEngine
-            self.yara_engine = YaraEngine()
+            from yemu.core.yara_engine import YaraEngine
+            self.yara_engine = YaraEngine(rules_dir=paths.synced_rules_dir())
             self._notify_ui("Running YARA static analysis...")
             static_matches = await self.yara_engine.scan_file_async(sample_path)
         except Exception as e:
@@ -82,7 +86,7 @@ class Orchestrator:
 
                 if hasattr(self.vm_manager, 'find_internet_facing_networks'):
                     exposed = await self.vm_manager.find_internet_facing_networks(guest_os)
-                    if exposed:
+                    if exposed and not self.config["network"]["allow_internet"]:
                         self._notify_ui(
                             f"WARNING: {guest_os} is not isolated ({', '.join(exposed)} can reach the host LAN/internet). "
                             "Samples may contact live infrastructure.", "CRITICAL")
@@ -154,11 +158,22 @@ class Orchestrator:
                 self._notify_ui("Running in-guest YARA memory scan...")
 
                 # Prepare rules for injection
-                rules_local_path = "/tmp/analysis_rules.yar"
-                if self.yara_engine.compile_to_file(rules_local_path):
-                    self._notify_ui("YARA rules compiled for in-guest scan.")
-                    rules_guest_path = "/tmp/rules.yar"
-                    await self.vm_manager.inject_file(guest_os, rules_local_path, rules_guest_path)
+                fd, rules_local_path = tempfile.mkstemp(prefix="yemu-rules-", suffix=".yarc")
+                os.close(fd)
+                try:
+                    compiled = self.yara_engine.compile_to_file(rules_local_path)
+                    if compiled:
+                        self._notify_ui("YARA rules compiled for in-guest scan.")
+                        rules_guest_path = "/tmp/rules.yar"
+                        # VM is running at this point, so use the live agent channel
+                        await self.vm_manager.inject_file_via_agent(guest_os, rules_local_path, rules_guest_path)
+                finally:
+                    try:
+                        os.remove(rules_local_path)
+                    except OSError:
+                        pass
+
+                if compiled:
 
                     # Ensure YARA is in guest
                     check_yara = await self.vm_manager.run_command(guest_os, "which yara")
@@ -197,7 +212,7 @@ class Orchestrator:
             try:
                 self._notify_ui("Collecting behavioral logs...")
                 # Wait a bit for sample to finish if it hasn't
-                await asyncio.sleep(5)
+                await asyncio.sleep(self.config["analysis"]["execution_wait"])
 
                 if run_pcap:
                     try:
@@ -206,13 +221,12 @@ class Orchestrator:
                         await self.vm_manager.run_command(guest_os, "sync")
 
                         # Pull PCAP from VM
-                        local_pcap = f"storage/captures/{analysis_id}.pcap"
-                        os.makedirs("storage/captures", exist_ok=True)
+                        local_pcap = str(paths.captures_dir() / f"{analysis_id}.pcap")
                         # Need a method to pull file from VM
                         if hasattr(self.vm_manager, 'pull_file'):
                             await self.vm_manager.pull_file(guest_os, "/tmp/capture.pcap", local_pcap)
 
-                            from core.network_capture import NetworkCapture
+                            from yemu.core.network_capture import NetworkCapture
                             net_cap = NetworkCapture()
                             iocs = net_cap.analyze_pcap(local_pcap)
                             for ioc_type, value in iocs:
@@ -227,7 +241,7 @@ class Orchestrator:
                     pids_str = await self.vm_manager.run_command(guest_os, "ls /tmp/strace.log*")
                     log_files = pids_str.strip().split()
 
-                    from core.behaviour_monitor import BehaviourMonitor
+                    from yemu.core.behaviour_monitor import BehaviourMonitor
                     monitor = BehaviourMonitor()
 
                     for log_file in log_files:
@@ -249,8 +263,8 @@ class Orchestrator:
             # 6. Threat Scoring
             try:
                 self._notify_ui("Computing threat score...")
-                from core.threat_scorer import ThreatScorer
-                scorer = ThreatScorer()
+                from yemu.core.threat_scorer import ThreatScorer
+                scorer = ThreatScorer(self.config["scoring"])
 
                 all_yara_matches = static_matches + memory_matches
 
@@ -287,7 +301,7 @@ class Orchestrator:
                     }
                     await self.db.update_analysis(analysis_id, report_json=report_data)
 
-                    from storage.report_store import ReportStore
+                    from yemu.storage.report_store import ReportStore
                     store = ReportStore()
                     store.save_json(analysis_id, report_data)
                     store.generate_pdf(analysis_id, report_data)

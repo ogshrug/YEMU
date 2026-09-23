@@ -1,10 +1,11 @@
 import aiosqlite
 import json
 import logging
+from yemu import paths
 
 class Database:
-    def __init__(self, db_path="malware_sandbox.db"):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        self.db_path = str(db_path or paths.db_path())
         self.conn = None
         self.logger = logging.getLogger(__name__)
 

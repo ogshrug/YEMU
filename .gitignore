@@ -18,3 +18,6 @@ storage/malware.db
 reports/*.pdf
 reports/*.json
 malware_sandbox.db
+*.egg-info/
+.pytest_cache/
+yemu.db

@@ -2,10 +2,11 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import json
 import os
+from yemu import paths
 
 class ReportStore:
-    def __init__(self, output_dir="assets/reports"):
-        self.output_dir = output_dir
+    def __init__(self, output_dir=None):
+        self.output_dir = str(output_dir or paths.reports_dir())
         os.makedirs(self.output_dir, exist_ok=True)
 
     def generate_pdf(self, analysis_id, data):
@@ -33,6 +34,6 @@ class ReportStore:
     def save_json(self, analysis_id, data):
         filename = f"report_{analysis_id}.json"
         filepath = os.path.join(self.output_dir, filename)
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
         return filepath

@@ -5,6 +5,8 @@ import json
 import datetime
 import logging
 
+from yemu import paths
+
 try:
     import requests
 except ImportError:
@@ -16,10 +18,10 @@ except ImportError:
     yara = None
 
 class YaraRuleSync:
-    def __init__(self, repo_url="https://github.com/Yara-Rules/rules", branch="master", rules_dir="rules/yara-rules/"):
+    def __init__(self, repo_url="https://github.com/Yara-Rules/rules", branch="master", rules_dir=None):
         self.repo_url = repo_url.rstrip('/')
         self.branch = branch
-        self.rules_dir = rules_dir
+        self.rules_dir = str(rules_dir or paths.synced_rules_dir())
         self.logger = logging.getLogger(__name__)
 
         # Parse owner and repo from URL
@@ -119,7 +121,7 @@ class YaraRuleSync:
                 }
 
                 manifest_path = os.path.join(self.rules_dir, ".sync_manifest.json")
-                with open(manifest_path, "w") as f:
+                with open(manifest_path, "w", encoding="utf-8") as f:
                     json.dump(manifest, f, indent=4)
 
                 self.logger.info(f"Sync complete. {synced_count} rules synced, {len(skipped_files)} skipped.")

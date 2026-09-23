@@ -5,13 +5,12 @@ try:
 except ImportError:
     Gtk = None
 
-from ui.dashboard import Dashboard
-from ui.log_viewer import LogViewer
-from ui.yara_editor import YaraEditor
-from ui.report_view import ReportView
-from core.vm_manager import MockVMManager
+from yemu.ui.dashboard import Dashboard
+from yemu.ui.log_viewer import LogViewer
+from yemu.ui.yara_editor import YaraEditor
+from yemu.ui.report_view import ReportView
+from yemu.core.vm_manager import MockVMManager
 import os
-import subprocess
 
 class MainWindow(Adw.ApplicationWindow):
     def _on_analysis_selected(self, listbox, row):
@@ -165,14 +164,14 @@ class MainWindow(Adw.ApplicationWindow):
             self.analysis_list.append(row)
 
     def _on_prepare_vm_clicked(self, btn):
-        script = os.path.join(os.path.dirname(__file__), "prepare_vm.sh")
-        import threading
-        def run_script():
-            try:
-                subprocess.Popen(["bash", script], cwd=os.path.dirname(script))
-            except Exception as e:
-                self._append_log(f"Failed to launch prepare_vm.sh: {e}", "CRITICAL")
-        threading.Thread(target=run_script, daemon=True).start()
+        if isinstance(self.orchestrator.vm_manager, MockVMManager):
+            self._append_log("VM preparation needs the libvirt backend (Linux + KVM). Not available in Mock Mode.", "WARN")
+            return
+        try:
+            from yemu.ui.prepare_vm_gui import VMPrepareWindow
+            VMPrepareWindow(parent=self).present()
+        except Exception as e:
+            self._append_log(f"Failed to open VM preparation window: {e}", "CRITICAL")
 
     def _append_log(self, msg, sev):
         GLib.idle_add(self.log_viewer.append_log, msg, sev)
@@ -258,8 +257,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.upload_btn.set_sensitive(vm_selected and snap_selected)
 
     def _check_group_permissions(self):
+        if os.name != "posix":
+            # libvirt group membership only applies on Linux hosts
+            return False
         import grp
-        import os
         try:
             username = os.getlogin()
             groups = [g.gr_name for g in grp.getgrall() if username in g.gr_mem]
@@ -405,10 +406,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.main_box.append(self.log_viewer)
 
         # Database and Orchestrator
-        from storage.db import Database
-        from core.orchestrator import Orchestrator
-        from core.vm_manager import VMManager
-        from core.async_runner import AsyncRunner
+        from yemu.storage.db import Database
+        from yemu.core.orchestrator import Orchestrator
+        from yemu.core.vm_backend import create_backend
+        from yemu.core.async_runner import AsyncRunner
+        from yemu import config as yemu_config
 
         self.runner = AsyncRunner()
         self.db = Database()
@@ -419,13 +421,15 @@ class MainWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self._update_progress_from_message, msg)
 
         # Check permissions
-        if not self._check_group_permissions():
+        self.config = yemu_config.load()
+        backend_name = self.config["vm"]["backend"]
+        if backend_name != "mock" and not self._check_group_permissions():
             vm_mgr = MockVMManager(ui_callback=self._append_log)
             self._append_log("Starting in Mock Mode due to missing permissions.", "WARN")
         else:
-            vm_mgr = VMManager(ui_callback=self._append_log)
+            vm_mgr = create_backend(backend_name, ui_callback=self._append_log)
 
-        self.orchestrator = Orchestrator(self.db, vm_manager=vm_mgr, ui_callback=ui_callback)
+        self.orchestrator = Orchestrator(self.db, vm_manager=vm_mgr, ui_callback=ui_callback, config=self.config)
 
         # Initial populations and validation
         self._update_vm_list()

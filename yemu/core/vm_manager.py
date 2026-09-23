@@ -7,22 +7,22 @@ import base64
 import tempfile
 import shutil
 
+from yemu.core.vm_backend import VMBackend
+
 try:
     import libvirt
 except ImportError:
     libvirt = None
 
-class VMManager:
+class VMManager(VMBackend):
+    """libvirt / QEMU-KVM backend (Linux hosts)."""
+    name = "libvirt"
+
     def __init__(self, ui_callback=None):
-        self.logger = logging.getLogger(__name__)
-        self.ui_callback = ui_callback
+        super().__init__(ui_callback=ui_callback)
         self._conn = None
         # Fix for libguestfs kernel access errors
         os.environ["LIBGUESTFS_BACKEND"] = "direct"
-
-    def _notify_ui(self, msg, severity="INFO"):
-        if self.ui_callback:
-            self.ui_callback(msg, severity)
 
     def _get_conn(self):
         if not libvirt:
@@ -99,7 +99,7 @@ class VMManager:
         except libvirt.libvirtError as e:
             self.logger.warning(f"Could not undefine domain: {e}")
 
-    async def ensure_network(self, network_name="malware-analysis"):
+    async def ensure_network(self, network_name="malware-analysis", nat=False):
         try:
             conn = self._get_conn()
             net = conn.networkLookupByName(network_name)
@@ -112,11 +112,18 @@ class VMManager:
                 self.logger.error(f"Error looking up network {network_name}: {e}")
                 return False
             self.logger.info(f"Network {network_name} not found. Creating...")
+            # NAT networks are only for provisioning; analysis networks stay isolated
+            subnet, bridge = ("192.168.101", "virbr-yemuprov") if nat else ("192.168.100", "virbr-malware")
+            forward = "<forward mode='nat'/>" if nat else ""
             xml = f"""
             <network>
               <name>{network_name}</name>
-              <bridge name='virbr-malware' stp='on' delay='0'/>
-              <ip address='192.168.100.1' netmask='255.255.255.0'>
+              {forward}
+              <bridge name='{bridge}' stp='on' delay='0'/>
+              <ip address='{subnet}.1' netmask='255.255.255.0'>
+                <dhcp>
+                  <range start='{subnet}.10' end='{subnet}.100'/>
+                </dhcp>
               </ip>
             </network>
             """
@@ -170,6 +177,27 @@ class VMManager:
             return True
         except libvirt.libvirtError as e:
             self.logger.error(f"Failed to define VM: {e}")
+            return False
+
+    async def switch_network(self, vm_name, from_network, to_network):
+        import xml.etree.ElementTree as ET
+        dom = self._get_domain(vm_name)
+        if not dom:
+            return False
+        try:
+            if dom.isActive():
+                dom.destroy()
+            root = ET.fromstring(dom.XMLDesc(libvirt.VIR_DOMAIN_XML_INACTIVE))
+            changed = False
+            for src in root.findall("./devices/interface[@type='network']/source"):
+                if src.get("network") == from_network:
+                    src.set("network", to_network)
+                    changed = True
+            if changed:
+                self._get_conn().defineXML(ET.tostring(root, encoding="unicode"))
+            return True
+        except (libvirt.libvirtError, ET.ParseError) as e:
+            self.logger.error(f"Failed to move {vm_name} to network {to_network}: {e}")
             return False
 
     async def create_snapshot(self, vm_name, snapshot_name="clean-baseline", description="Clean state"):
@@ -493,14 +521,9 @@ class VMManager:
             self.logger.error(f"Pull failed: {e}")
             return False
 
-class MockVMManager:
-    def __init__(self, ui_callback=None):
-        self.logger = logging.getLogger(__name__)
-        self.ui_callback = ui_callback
-
-    def _notify_ui(self, msg, severity="INFO"):
-        if self.ui_callback:
-            self.ui_callback(msg, severity)
+class MockVMManager(VMBackend):
+    """Canned responses so the UI, CLI and tests run without virtualization."""
+    name = "mock"
 
     def list_vms(self):
         return ["mock-ubuntu", "mock-windows"]
@@ -508,7 +531,10 @@ class MockVMManager:
     def list_snapshots(self, vm_name):
         return ["clean-baseline", "infected-state"]
 
-    async def ensure_network(self, network_name="malware-analysis"):
+    async def ensure_network(self, network_name="malware-analysis", nat=False):
+        return True
+
+    async def switch_network(self, vm_name, from_network, to_network):
         return True
 
     async def create_disk(self, disk_path, size_gb, backing_file=None):
@@ -571,3 +597,8 @@ packer_match [packer] /proc/5678/mem
 
     async def pull_file(self, vm_name, guest_path, local_path):
         return True
+
+
+# Names used by the backend registry
+LibvirtBackend = VMManager
+MockBackend = MockVMManager

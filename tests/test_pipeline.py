@@ -7,15 +7,14 @@ from unittest.mock import MagicMock
 if 'libvirt' not in sys.modules:
     sys.modules['libvirt'] = MagicMock()
 
-from core.async_runner import AsyncRunner
-from core.orchestrator import Orchestrator
-from core.vm_manager import MockVMManager
-from storage.db import Database
+from yemu.core.async_runner import AsyncRunner
+from yemu.core.orchestrator import Orchestrator
+from yemu.core.vm_manager import MockVMManager
+from yemu.storage.db import Database
 
 
 @pytest.mark.asyncio
-async def test_successful_run_persists_score_and_verdict(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)  # orchestrator writes reports relative to CWD
+async def test_successful_run_persists_score_and_verdict(tmp_path):
     db = Database(str(tmp_path / "yemu.db"))
     await db.connect()
     sample = tmp_path / "sample.bin"
