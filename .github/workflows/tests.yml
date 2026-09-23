@@ -14,13 +14,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install -e ".[dev]" ruff mypy
+        run: python -m pip install -e ".[dev]"
       - name: Ruff
         run: |
           ruff check yemu tests
           ruff format --check yemu tests
-      - name: Mypy
-        run: mypy
+      - name: Mypy (Linux and Windows targets)
+        run: |
+          mypy --platform linux
+          mypy --platform win32
 
   pytest:
     strategy:

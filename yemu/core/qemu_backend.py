@@ -19,6 +19,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -275,7 +276,7 @@ class QemuBackend(VMBackend):
         self.logger.info(f"Starting QEMU ({self.accel}): {' '.join(cmd)}")
         log = open(vm_dir / "qemu.log", "ab")
         kwargs: dict[str, Any] = {"stdout": log, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
-        if os.name == "nt":
+        if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         else:
             kwargs["start_new_session"] = True

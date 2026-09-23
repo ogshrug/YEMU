@@ -23,7 +23,7 @@ from yemu import paths
 try:
     import requests
 except ImportError:
-    requests = None
+    requests = None  # type: ignore[assignment]
 
 try:
     import yara

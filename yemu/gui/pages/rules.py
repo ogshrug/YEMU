@@ -224,6 +224,8 @@ class RulesPage(QWidget):
                 continue
             for j in range(top.childCount()):
                 child = top.child(j)
+                if child is None:
+                    continue
                 child.setHidden(bool(text) and text not in child.text(0).lower())
             if text:
                 top.setExpanded(True)
@@ -295,6 +297,8 @@ class RulesPage(QWidget):
                 continue
             for j in range(top.childCount()):
                 child = top.child(j)
+                if child is None:
+                    continue
                 data = child.data(0, Qt.ItemDataRole.UserRole)
                 if data and Path(data[0]) == path:
                     self.tree.setCurrentItem(child)
