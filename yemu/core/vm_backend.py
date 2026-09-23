@@ -5,6 +5,25 @@ subclass and registering it in create_backend().
 """
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Optional
+
+PROVISION_NETWORK = "yemu-provision"
+
+
+@dataclass
+class VMSpec:
+    """Backend-neutral VM definition; each backend renders it (libvirt XML, QEMU argv...)."""
+    name: str
+    disk_path: str
+    ram_mb: int = 2048
+    cpus: int = 2
+    network: str = "malware-analysis"
+    os_type: str = "linux"
+    iso_path: Optional[str] = None
+    cloud_init_path: Optional[str] = None
+    virtio_win_path: Optional[str] = None
+    windows_auto_path: Optional[str] = None
 
 
 class VMBackend(ABC):
@@ -75,37 +94,59 @@ class VMBackend(ABC):
     async def create_disk(self, disk_path, size_gb, backing_file=None): ...
 
     @abstractmethod
-    async def define_vm(self, xml, vm_name): ...
+    async def define_vm(self, spec):
+        """Create or replace a VM from a VMSpec."""
+
+    def vm_disk_path(self, vm_name):
+        """Where provisioning should put this VM's disk."""
+        from yemu import paths
+        return str(paths.vm_storage_dir() / f"{vm_name}.qcow2")
 
     @abstractmethod
     async def switch_network(self, vm_name, from_network, to_network):
         """Re-attach a stopped VM's interfaces from one network to another."""
 
 
-BACKENDS = ("auto", "libvirt", "mock")
+BACKENDS = ("auto", "libvirt", "qemu", "mock")
 
 
-def create_backend(name="auto", ui_callback=None):
+def create_backend(name="auto", ui_callback=None, config=None):
     """
-    Build a backend by name. "auto" tries libvirt and falls back to the mock backend,
-    so the UI and CLI stay usable on hosts without virtualization.
+    Build a backend by name. "auto" prefers libvirt (Linux), then standalone QEMU
+    (Windows/Linux), then the mock backend, so the UI and CLI stay usable anywhere.
     """
+    import os
+    from yemu import config as yemu_config
     from yemu.core.vm_manager import VMManager, MockVMManager
+    from yemu.core.qemu_backend import QemuBackend
 
     logger = logging.getLogger(__name__)
+    config = config or yemu_config.load()
     if name == "mock":
         return MockVMManager(ui_callback=ui_callback)
     if name == "libvirt":
         return VMManager(ui_callback=ui_callback)
+    if name == "qemu":
+        return QemuBackend(ui_callback=ui_callback, config=config)
     if name != "auto":
         raise ValueError(f"Unknown VM backend '{name}'. Choose from: {', '.join(BACKENDS)}")
 
-    backend = VMManager(ui_callback=ui_callback)
-    try:
-        backend._get_conn()
-        return backend
-    except Exception as e:
-        logger.warning(f"libvirt unavailable ({e}); using mock backend")
-        if ui_callback:
-            ui_callback(f"libvirt unavailable ({e}). Running in Mock Mode.", "WARN")
-        return MockVMManager(ui_callback=ui_callback)
+    reasons = []
+    if os.name == "posix":
+        backend = VMManager(ui_callback=ui_callback)
+        try:
+            backend._get_conn()
+            return backend
+        except Exception as e:
+            reasons.append(f"libvirt: {e}")
+
+    qemu = QemuBackend(ui_callback=ui_callback, config=config)
+    if qemu.available():
+        return qemu
+    reasons.append("qemu: qemu-system-x86_64 / qemu-img not found")
+
+    reason = "; ".join(reasons)
+    logger.warning(f"No VM backend available ({reason}); using mock backend")
+    if ui_callback:
+        ui_callback(f"No VM backend available ({reason}). Running in Mock Mode.", "WARN")
+    return MockVMManager(ui_callback=ui_callback)

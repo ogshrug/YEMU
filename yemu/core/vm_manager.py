@@ -169,9 +169,11 @@ class VMManager(VMBackend):
             self.logger.error(f"Disk creation failed: {e}")
             return False
 
-    async def define_vm(self, xml, vm_name):
+    async def define_vm(self, spec):
+        from yemu.core.vm_provisioner import VMProvisioner
+        xml = VMProvisioner.render_libvirt_xml(spec)
         conn = self._get_conn()
-        self._remove_existing_domain(vm_name)
+        self._remove_existing_domain(spec.name)
         try:
             conn.defineXML(xml)
             return True
@@ -185,8 +187,7 @@ class VMManager(VMBackend):
         if not dom:
             return False
         try:
-            if dom.isActive():
-                dom.destroy()
+            await self._shutdown_gracefully(dom)
             root = ET.fromstring(dom.XMLDesc(libvirt.VIR_DOMAIN_XML_INACTIVE))
             changed = False
             for src in root.findall("./devices/interface[@type='network']/source"):
@@ -199,6 +200,21 @@ class VMManager(VMBackend):
         except (libvirt.libvirtError, ET.ParseError) as e:
             self.logger.error(f"Failed to move {vm_name} to network {to_network}: {e}")
             return False
+
+    async def _shutdown_gracefully(self, dom, timeout=120):
+        """ACPI shutdown so freshly written guest data reaches disk; force off after timeout."""
+        if not dom.isActive():
+            return
+        try:
+            dom.shutdown()
+        except libvirt.libvirtError:
+            pass
+        for _ in range(timeout // 2):
+            if not dom.isActive():
+                return
+            await asyncio.sleep(2)
+        self.logger.warning(f"{dom.name()} did not shut down in {timeout}s, forcing off")
+        dom.destroy()
 
     async def create_snapshot(self, vm_name, snapshot_name="clean-baseline", description="Clean state"):
         dom = self._get_domain(vm_name)
@@ -540,7 +556,7 @@ class MockVMManager(VMBackend):
     async def create_disk(self, disk_path, size_gb, backing_file=None):
         return disk_path
 
-    async def define_vm(self, xml, vm_name):
+    async def define_vm(self, spec):
         return True
 
     async def create_snapshot(self, vm_name, snapshot_name="clean-baseline", description="Clean state"):

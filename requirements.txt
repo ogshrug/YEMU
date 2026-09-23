@@ -6,6 +6,7 @@ requests>=2.31
 scapy>=2.5
 platformdirs>=3.0
 PyYAML>=6.0
+pycdlib>=1.14
 tomli>=2.0; python_version < "3.11"
 
 # Linux host only (real VMs + GTK app)

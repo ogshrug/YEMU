@@ -19,10 +19,15 @@ logger = logging.getLogger(__name__)
 
 DEFAULTS = {
     "vm": {
-        "backend": "auto",              # auto | libvirt | mock
+        "backend": "auto",              # auto | libvirt | qemu | mock
         "default_vm": "ubuntu-clean",
         "default_snapshot": "clean-baseline",
         "agent_timeout": 300,           # seconds to wait for qemu-guest-agent
+    },
+    "qemu": {
+        "bin_dir": "",                  # folder with qemu-system-x86_64 / qemu-img; empty = PATH + usual dirs
+        "accel": "auto",                # auto | whpx | kvm | hvf | tcg
+        "extra_args": [],
     },
     "network": {
         "name": "malware-analysis",
@@ -48,13 +53,18 @@ DEFAULTS = {
     },
 }
 
-TEMPLATE = """# YEMU configuration. Every key is optional; defaults are shown.
+TEMPLATE = r"""# YEMU configuration. Every key is optional; defaults are shown.
 
 [vm]
-backend = "auto"            # auto | libvirt | mock
+backend = "auto"            # auto | libvirt | qemu | mock
 default_vm = "ubuntu-clean"
 default_snapshot = "clean-baseline"
 agent_timeout = 300
+
+[qemu]
+bin_dir = ""                # e.g. 'C:\Program Files\qemu'; empty = PATH + usual install dirs
+accel = "auto"              # auto | whpx | kvm | hvf | tcg
+extra_args = []
 
 [network]
 name = "malware-analysis"

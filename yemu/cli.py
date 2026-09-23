@@ -1,9 +1,8 @@
 """
-Headless entry point. Works on any host; VM-backed commands need the libvirt
-backend (Linux + KVM), everything else (mock analysis, reports, rules, config)
-runs on Windows too.
+Headless entry point; works on Linux and Windows.
 
-    yemu analyze sample.bin --vm ubuntu-clean
+    yemu vm create ubuntu-clean            # build an isolated analysis VM (qemu or libvirt)
+    yemu analyze sample.bin                # detonate a sample
     yemu analyze sample.bin --backend mock --json
     yemu reports / yemu report 3
     yemu sync-rules
@@ -61,7 +60,7 @@ def cmd_analyze(args, cfg):
         return 2
 
     callback = _printer(quiet=args.json)
-    backend = create_backend(args.backend or cfg["vm"]["backend"], ui_callback=callback)
+    backend = create_backend(args.backend or cfg["vm"]["backend"], ui_callback=callback, config=cfg)
 
     async def run(db):
         orch = Orchestrator(db, vm_manager=backend, ui_callback=callback, config=cfg)
@@ -125,11 +124,78 @@ def cmd_report(args, cfg):
     return 0
 
 
+def _backend(args, cfg):
+    return create_backend(getattr(args, "backend", None) or cfg["vm"]["backend"], ui_callback=_printer(), config=cfg)
+
+
 def cmd_list_vms(args, cfg):
-    backend = create_backend(args.backend or cfg["vm"]["backend"], ui_callback=_printer())
-    for vm in sorted(backend.list_vms()):
+    backend = _backend(args, cfg)
+    vms = sorted(backend.list_vms())
+    if not vms:
+        print(f"No VMs on the {backend.name} backend. Create one with: yemu vm create <name>")
+    for vm in vms:
         snaps = backend.list_snapshots(vm)
         print(f"{vm}  [{backend.name}]  snapshots: {', '.join(snaps) or '-'}")
+    return 0
+
+
+def cmd_vm_create(args, cfg):
+    from yemu.core.provisioning import ProvisioningError, provision_vm
+
+    backend = _backend(args, cfg)
+    if backend.name == "mock":
+        print("No real VM backend available (install QEMU, or libvirt on Linux). See `yemu doctor`.", file=sys.stderr)
+        return 2
+
+    last = {"pct": -1}
+
+    def progress(msg, fraction):
+        if msg:
+            print(f"[*] {msg}", file=sys.stderr, flush=True)
+        elif fraction is not None and int(fraction * 100) != last["pct"]:
+            last["pct"] = int(fraction * 100)
+            print(f"\r    {last['pct']:3d}%", end="", file=sys.stderr, flush=True)
+
+    try:
+        password = asyncio.run(provision_vm(
+            backend, args.name, distro=args.distro, ram_mb=args.ram, cpus=args.cpus, disk_gb=args.disk,
+            analysis_network=cfg["network"]["name"], snapshot_name=cfg["vm"]["default_snapshot"],
+            progress=progress))
+    except (ProvisioningError, RuntimeError, OSError) as e:
+        print(f"\n[X] VM preparation failed: {e}", file=sys.stderr)
+        return 1
+    print(f"\nVM '{args.name}' is ready on the {backend.name} backend.")
+    print(f"Guest console password: {password}")
+    if args.name != cfg["vm"]["default_vm"]:
+        print(f'Tip: set default_vm = "{args.name}" under [vm] in {paths.config_file()}')
+    return 0
+
+
+def cmd_vm_start(args, cfg):
+    backend = _backend(args, cfg)
+    ok = asyncio.run(backend.start_vm(args.name))
+    if ok and args.console:
+        asyncio.run(backend.open_gui(args.name))
+    print(f"{args.name}: {'started' if ok else 'failed to start'}")
+    return 0 if ok else 1
+
+
+def cmd_vm_stop(args, cfg):
+    ok = asyncio.run(_backend(args, cfg).stop_vm(args.name))
+    print(f"{args.name}: {'stopped' if ok else 'failed to stop'}")
+    return 0 if ok else 1
+
+
+def cmd_vm_delete(args, cfg):
+    backend = _backend(args, cfg)
+    if not hasattr(backend, "delete_vm"):
+        print(f"Deleting VMs is not supported on the {backend.name} backend; use virsh/virt-manager.", file=sys.stderr)
+        return 2
+    if not args.yes:
+        print(f"This deletes VM '{args.name}' and its disk. Re-run with --yes to confirm.", file=sys.stderr)
+        return 2
+    asyncio.run(backend.delete_vm(args.name))
+    print(f"{args.name}: deleted")
     return 0
 
 
@@ -192,10 +258,31 @@ def cmd_doctor(args, cfg):
     except Exception as e:
         _check("GTK 4 + libadwaita", False, f"{type(e).__name__} (GUI needs Linux or WSL2)")
 
-    print("\nVM backend (libvirt):")
+    print("\nVM backend (qemu, works on Windows and Linux):")
+    from yemu.core.qemu_backend import QemuBackend
+    qemu = QemuBackend(config=cfg)
+    _check("qemu-system-x86_64", bool(qemu.qemu_system), qemu.qemu_system or "not found (install QEMU or set [qemu].bin_dir)")
+    _check("qemu-img", bool(qemu.qemu_img), qemu.qemu_img or "not found")
+    if qemu.qemu_system:
+        accel = qemu.accel
+        _check("hardware acceleration", accel != "tcg",
+               accel if accel != "tcg" else "tcg only: enable Windows Hypervisor Platform (Windows) or /dev/kvm access (Linux)")
+    try:
+        import pycdlib  # noqa: F401
+        _check("cloud-init ISO builder", True, "pycdlib")
+    except ImportError:
+        from yemu.core.vm_provisioner import VMProvisioner
+        tool = VMProvisioner._find_mkisofs()
+        _check("cloud-init ISO builder", bool(tool), tool or "install pycdlib or genisoimage")
+
+    print("\nVM backend (libvirt, Linux only):")
     if os.name != "posix":
-        print("  libvirt backend is Linux-only. On Windows, run YEMU inside WSL2 or use --backend mock.")
+        print("  Not applicable on Windows. Use the qemu backend above, or run YEMU inside WSL2.")
     else:
+        if _is_wsl():
+            print("  Running inside WSL2.")
+            _check("systemd (needed by libvirtd)", os.path.isdir("/run/systemd/system"),
+                   "add [boot] systemd=true to /etc/wsl.conf, then run `wsl --shutdown`")
         _check("/dev/kvm", os.path.exists("/dev/kvm"))
         for tool in ("virsh", "qemu-img", "virt-copy-in", "virt-viewer"):
             _check(tool, shutil.which(tool) is not None)
@@ -204,10 +291,24 @@ def cmd_doctor(args, cfg):
             _check("libvirt-python", True)
         except ImportError:
             _check("libvirt-python", False)
-        backend = create_backend("auto")
-        _check("libvirt connection", backend.name == "libvirt",
-               "connected" if backend.name == "libvirt" else "falling back to mock")
+        from yemu.core.vm_manager import VMManager
+        try:
+            VMManager()._get_conn()
+            _check("libvirt connection", True, "connected")
+        except Exception as e:
+            _check("libvirt connection", False, str(e).splitlines()[0])
+
+    chosen = create_backend(cfg["vm"]["backend"], config=cfg)
+    print(f"\nSelected backend ([vm].backend = {cfg['vm']['backend']}): {chosen.name}")
     return 0
+
+
+def _is_wsl():
+    try:
+        with open("/proc/version", encoding="utf-8") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
 
 
 def build_parser():
@@ -236,9 +337,37 @@ def build_parser():
     p.add_argument("id", type=int)
     p.set_defaults(func=cmd_report)
 
-    p = sub.add_parser("list-vms", help="list VMs and snapshots")
+    p = sub.add_parser("list-vms", help="list VMs and snapshots (same as `yemu vm list`)")
     p.add_argument("--backend", choices=BACKENDS)
     p.set_defaults(func=cmd_list_vms)
+
+    vm = sub.add_parser("vm", help="create and manage analysis VMs")
+    vm_sub = vm.add_subparsers(dest="vm_command", required=True)
+    p = vm_sub.add_parser("list", help="list VMs and snapshots")
+    p.add_argument("--backend", choices=BACKENDS)
+    p.set_defaults(func=cmd_list_vms)
+    p = vm_sub.add_parser("create", help="download a cloud image and build an isolated analysis VM")
+    p.add_argument("name")
+    p.add_argument("--distro", choices=("ubuntu", "debian", "windows"), default="ubuntu")
+    p.add_argument("--ram", type=int, default=2048, help="MiB")
+    p.add_argument("--cpus", type=int, default=2)
+    p.add_argument("--disk", type=int, default=20, help="GiB")
+    p.add_argument("--backend", choices=BACKENDS)
+    p.set_defaults(func=cmd_vm_create)
+    p = vm_sub.add_parser("start", help="boot a VM")
+    p.add_argument("name")
+    p.add_argument("--console", action="store_true", help="open a viewer on the VM display")
+    p.add_argument("--backend", choices=BACKENDS)
+    p.set_defaults(func=cmd_vm_start)
+    p = vm_sub.add_parser("stop", help="power a VM off")
+    p.add_argument("name")
+    p.add_argument("--backend", choices=BACKENDS)
+    p.set_defaults(func=cmd_vm_stop)
+    p = vm_sub.add_parser("delete", help="delete a VM and its disk (qemu backend)")
+    p.add_argument("name")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--backend", choices=BACKENDS)
+    p.set_defaults(func=cmd_vm_delete)
 
     p = sub.add_parser("sync-rules", help="download YARA rules from GitHub")
     p.add_argument("--repo")

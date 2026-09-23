@@ -32,7 +32,7 @@ class VMProvisioner:
         # Per-provisioner random guest password instead of a hard-coded one
         self.guest_password = secrets.token_urlsafe(12)
 
-    def download_file(self, url, filename=None):
+    def download_file(self, url, filename=None, progress_callback=None):
         if not filename:
             filename = os.path.basename(url)
         target_path = os.path.join(self.download_dir, filename)
@@ -41,16 +41,28 @@ class VMProvisioner:
             self.logger.info(f"File {filename} already exists.")
             return target_path
 
+        # Download to .part and rename, so an interrupted download is never mistaken for a complete one
+        part_path = target_path + ".part"
         self.logger.info(f"Downloading {url} to {target_path}...")
         try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-            with open(target_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+            with requests.get(url, stream=True, timeout=30) as response:
+                response.raise_for_status()
+                total = int(response.headers.get("content-length", 0))
+                done = 0
+                with open(part_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        f.write(chunk)
+                        done += len(chunk)
+                        if progress_callback:
+                            progress_callback(done, total)
+            os.replace(part_path, target_path)
             self.logger.info(f"Downloaded {target_path}")
         except Exception as e:
             self.logger.error(f"Download failed: {e}")
+            try:
+                os.remove(part_path)
+            except OSError:
+                pass
             raise
         return target_path
 
@@ -76,74 +88,66 @@ class VMProvisioner:
             path = shutil.which(exe)
             if path:
                 return path
-        raise FileNotFoundError(
-            "Neither genisoimage, mkisofs, nor xorrisofs found. "
-            "Install one: sudo apt install genisoimage"
-        )
+        return None
+
+    def _build_iso(self, files, volume_id, out_path):
+        """
+        Write a small Joliet + Rock Ridge ISO holding `files` ({name: bytes}).
+        Uses genisoimage/mkisofs when installed, otherwise pure-Python pycdlib (Windows).
+        """
+        if os.path.exists(out_path):
+            os.remove(out_path)
+        mkisofs = self._find_mkisofs()
+        if mkisofs:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                file_paths = []
+                for name, data in files.items():
+                    fp = os.path.join(tmpdir, name)
+                    with open(fp, "wb") as f:
+                        f.write(data)
+                    file_paths.append(fp)
+                cmd = [mkisofs, "-output", out_path, "-volid", volume_id, "-joliet", "-rock", *file_paths]
+                result = subprocess.run(cmd, check=False, capture_output=True)
+                if result.returncode != 0:
+                    stderr = result.stderr.decode(errors="replace")
+                    raise RuntimeError(f"{os.path.basename(mkisofs)} failed (exit {result.returncode}): {stderr}")
+        else:
+            try:
+                import pycdlib
+            except ImportError:
+                raise RuntimeError("No ISO tool found: install genisoimage (Linux) or `pip install pycdlib`")
+            import io
+            iso = pycdlib.PyCdlib()
+            iso.new(interchange_level=3, joliet=3, rock_ridge="1.09", vol_ident=volume_id)
+            for idx, (name, data) in enumerate(files.items()):
+                iso9660_name = f"/F{idx}.;1"
+                iso.add_fp(io.BytesIO(data), len(data), iso9660_name, rr_name=name, joliet_path=f"/{name}")
+            iso.write(out_path)
+            iso.close()
+        if os.name != "nt":
+            os.chmod(out_path, 0o644)
+        return out_path
 
     def create_cloud_init_iso(self, vm_name, user_data_content):
-        mkisofs = self._find_mkisofs()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            user_data_path = os.path.join(tmpdir, "user-data")
-            meta_data_path = os.path.join(tmpdir, "meta-data")
-            with open(user_data_path, "w", encoding="utf-8") as f:
-                f.write("#cloud-config\n" + user_data_content)
-            with open(meta_data_path, "w", encoding="utf-8") as f:
-                f.write(f"instance-id: {vm_name}\nlocal-hostname: {vm_name}\n")
-            iso_path = os.path.join(tmpdir, f"{vm_name}-cloud-init.iso")
-            cmd = [mkisofs, "-output", iso_path, "-volid", "cidata", "-joliet", "-rock", user_data_path, meta_data_path]
-            try:
-                result = subprocess.run(cmd, check=False, capture_output=True)
-                if result.returncode != 0:
-                    stderr = result.stderr.decode(errors="replace")
-                    self.logger.error(f"mkisofs failed (exit {result.returncode}): {stderr}")
-                    raise RuntimeError(
-                        f"mkisofs failed (exit {result.returncode}): {stderr}"
-                    )
-            except Exception as e:
-                self.logger.error(f"Failed to run mkisofs: {e}")
-                raise RuntimeError(f"Failed to run mkisofs: {e}")
-            out_path = os.path.join(self.download_dir, f"{vm_name}-cloud-init.iso")
-            if os.path.exists(out_path):
-                try:
-                    os.remove(out_path)
-                except PermissionError:
-                    out_path = os.path.join(str(paths.vm_storage_dir()), f"{vm_name}-cloud-init.iso")
-                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            shutil.move(iso_path, out_path)
-            os.chmod(out_path, 0o644)
-            return out_path
+        files = {
+            "user-data": ("#cloud-config\n" + user_data_content).encode(),
+            "meta-data": f"instance-id: {vm_name}\nlocal-hostname: {vm_name}\n".encode(),
+        }
+        out_path = os.path.join(str(paths.vm_storage_dir()), f"{vm_name}-cloud-init.iso")
+        return self._build_iso(files, "cidata", out_path)
 
     def create_windows_auto_iso(self, vm_name):
-        mkisofs = self._find_mkisofs()
-        xml_content = self.generate_autounattend_xml()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            xml_path = os.path.join(tmpdir, "Autounattend.xml")
-            with open(xml_path, "w", encoding="utf-8") as f:
-                f.write(xml_content)
-            tmp_iso = os.path.join(tmpdir, f"{vm_name}-windows-auto.iso")
-            cmd = [mkisofs, "-output", tmp_iso, "-volid", "OEMDRIVERS", "-joliet", "-rock", xml_path]
-            try:
-                result = subprocess.run(cmd, check=False, capture_output=True)
-                if result.returncode != 0:
-                    stderr = result.stderr.decode(errors="replace")
-                    self.logger.error(f"mkisofs failed (exit {result.returncode}): {stderr}")
-                    raise RuntimeError(
-                        f"mkisofs failed (exit {result.returncode}): {stderr}"
-                    )
-            except Exception as e:
-                self.logger.error(f"Failed to run mkisofs: {e}")
-                raise RuntimeError(f"Failed to run mkisofs: {e}")
-            iso_path = os.path.join(self.download_dir, f"{vm_name}-windows-auto.iso")
-            shutil.move(tmp_iso, iso_path)
-            os.chmod(iso_path, 0o644)
-            return iso_path
+        files = {"Autounattend.xml": self.generate_autounattend_xml().encode()}
+        out_path = os.path.join(str(paths.vm_storage_dir()), f"{vm_name}-windows-auto.iso")
+        return self._build_iso(files, "OEMDRIVERS", out_path)
 
     def get_default_user_data(self):
         config = {
             "package_update": True,
-            "package_upgrade": True,
-            "packages": ["qemu-guest-agent", "strace", "tcpdump", "curl"],
+            # A full upgrade adds minutes and isn't needed for a throwaway analysis guest
+            "package_upgrade": False,
+            # yara must be installed now: the analysis network has no internet access
+            "packages": ["qemu-guest-agent", "strace", "tcpdump", "curl", "yara"],
             "password": self.guest_password,
             "chpasswd": {"expire": False},
             "ssh_pwauth": False,
@@ -265,7 +269,16 @@ class VMProvisioner:
 </unattend>
 """.replace("{password}", self.guest_password)
 
-    def get_libvirt_xml(self, vm_name, ram_mb=2048, cpu_count=2, disk_path=None, iso_path=None, cloud_init_path=None, virtio_win_path=None, windows_auto_path=None, network_name="malware-analysis"):
+    @classmethod
+    def render_libvirt_xml(cls, spec):
+        return cls.get_libvirt_xml(
+            spec.name, spec.ram_mb, spec.cpus,
+            disk_path=spec.disk_path, iso_path=spec.iso_path, cloud_init_path=spec.cloud_init_path,
+            virtio_win_path=spec.virtio_win_path, windows_auto_path=spec.windows_auto_path,
+            network_name=spec.network)
+
+    @staticmethod
+    def get_libvirt_xml(vm_name, ram_mb=2048, cpu_count=2, disk_path=None, iso_path=None, cloud_init_path=None, virtio_win_path=None, windows_auto_path=None, network_name="malware-analysis"):
         allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
         if not vm_name or any(c not in allowed for c in vm_name):
             raise ValueError("vm_name contains invalid characters")

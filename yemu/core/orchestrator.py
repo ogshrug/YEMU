@@ -101,7 +101,7 @@ class Orchestrator:
                     raise RuntimeError("Failed to start VM.")
 
                 self._notify_ui("Waiting for guest agent...")
-                await self.vm_manager.wait_for_guest_agent(guest_os)
+                await self.vm_manager.wait_for_guest_agent(guest_os, timeout=self.config["vm"]["agent_timeout"])
 
                 self._notify_ui("Injecting sample into VM...")
                 # We explicitly tell VMManager to name it 'malware_sample' in /
@@ -119,7 +119,7 @@ class Orchestrator:
                     await self.vm_manager.stop_vm(guest_os)
                     if await self.vm_manager.inject_file(guest_os, sample_path, guest_sample_path):
                         await self.vm_manager.start_vm(guest_os)
-                        await self.vm_manager.wait_for_guest_agent(guest_os)
+                        await self.vm_manager.wait_for_guest_agent(guest_os, timeout=self.config["vm"]["agent_timeout"])
                     else:
                         self._notify_ui("Failed to inject sample. Continuing anyway...", "WARN")
             except Exception as e:

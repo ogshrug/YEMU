@@ -4,25 +4,24 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib, Gio
 import asyncio
 import threading
-import os
-import sys
 import logging
-import zipfile
 
 from yemu.core.vm_provisioner import VMProvisioner
-from yemu.core.vm_manager import VMManager
+from yemu.core.provisioning import provision_vm
+from yemu.core.vm_backend import create_backend
 from yemu import config as yemu_config
 from yemu import paths
 
-PROVISION_NETWORK = "yemu-provision"
 
 class VMPrepareWindow(Gtk.Window):
-    def __init__(self, parent=None, **kwargs):
+    def __init__(self, parent=None, backend=None, runner=None, on_finished=None, **kwargs):
         super().__init__(title="VM Preparation Tool", transient_for=parent, modal=True, **kwargs)
         self.set_default_size(600, 550)
 
         self.provisioner = VMProvisioner()
-        self.manager = VMManager()
+        self.backend = backend or create_backend("auto")
+        self.runner = runner
+        self.on_finished = on_finished
         self.analysis_network = yemu_config.load()["network"]["name"]
         self.logger = logging.getLogger("VMPrepare")
 
@@ -40,7 +39,8 @@ class VMPrepareWindow(Gtk.Window):
         self.name_entry.set_text("ubuntu-clean")
         group.add(self.name_entry)
 
-        model = Gtk.StringList(strings=["ubuntu", "debian", "windows"])
+        distros = ["ubuntu", "debian"] + (["windows"] if self.backend.name == "libvirt" else [])
+        model = Gtk.StringList(strings=distros)
         self.distro_combo = Gtk.DropDown(model=model)
         distro_row = Adw.ActionRow(title="Distribution")
         distro_row.add_suffix(self.distro_combo)
@@ -108,116 +108,34 @@ class VMPrepareWindow(Gtk.Window):
         ).start()
 
     def _run_preparation(self, vm_name, distro, ram, cpu, disk_size):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(self._async_prepare(vm_name, distro, ram, cpu, disk_size))
-        loop.close()
-        GLib.idle_add(self.start_btn.set_sensitive, True)
-        GLib.idle_add(self.start_btn.set_label, "Prepare VM")
+        def progress(msg, fraction):
+            if msg:
+                GLib.idle_add(self._append_log, msg)
+            if fraction is not None:
+                GLib.idle_add(self.progress_bar.set_fraction, fraction)
 
-    async def _async_prepare(self, vm_name, distro, ram, cpu, disk_size):
-        GLib.idle_add(self._append_log, f"Starting preparation for {vm_name} ({distro})...")
-        GLib.idle_add(self.progress_bar.set_fraction, 0.05)
+        def on_done(password, error):
+            if error:
+                GLib.idle_add(self._append_log, f"ERROR: {error}")
+                self.logger.error(f"Preparation failed: {error}")
+            else:
+                GLib.idle_add(self._append_log, "VM Preparation COMPLETED SUCCESSFULLY.")
+                GLib.idle_add(self._append_log, f"Guest console password: {password}")
+            GLib.idle_add(self.start_btn.set_sensitive, True)
+            GLib.idle_add(self.start_btn.set_label, "Prepare VM")
+            if self.on_finished:
+                GLib.idle_add(self.on_finished)
 
-        try:
-            # Guest tools are installed over a NAT network; analysis happens on the isolated one
-            GLib.idle_add(self._append_log, f"Ensuring isolated network '{self.analysis_network}' exists...")
-            if not await self.manager.ensure_network(self.analysis_network, nat=False):
-                raise RuntimeError("Failed to ensure isolated network.")
-            GLib.idle_add(self._append_log, f"Ensuring provisioning network '{PROVISION_NETWORK}' (NAT) exists...")
-            if not await self.manager.ensure_network(PROVISION_NETWORK, nat=True):
-                raise RuntimeError("Failed to ensure provisioning network.")
-            GLib.idle_add(self.progress_bar.set_fraction, 0.1)
-
-            GLib.idle_add(self._append_log, f"Downloading {distro} image and tools...")
-            image_path = None
-            cloud_init_path = None
-            virtio_win_path = None
-            windows_auto_path = None
-            procmon_path = None
-
-            if distro in ["ubuntu", "debian"]:
-                image_path = self.provisioner.download_cloud_image(distro)
-                GLib.idle_add(self._append_log, "Generating Cloud-Init configuration...")
-                user_data = self.provisioner.get_default_user_data()
-                cloud_init_path = self.provisioner.create_cloud_init_iso(vm_name, user_data)
-            elif distro == "windows":
-                image_path = self.provisioner.download_iso("windows")
-                GLib.idle_add(self._append_log, "Downloading VirtIO drivers and Procmon...")
-                virtio_win_path = self.provisioner.download_virtio_win()
-                windows_auto_path = self.provisioner.create_windows_auto_iso(vm_name)
-                procmon_zip = self.provisioner.download_procmon()
-                with zipfile.ZipFile(procmon_zip, 'r') as zip_ref:
-                    extract_dir = os.path.join(self.provisioner.download_dir, "procmon_tmp")
-                    zip_ref.extractall(extract_dir)
-                    procmon_path = os.path.join(extract_dir, "Procmon.exe")
-
-            GLib.idle_add(self.progress_bar.set_fraction, 0.4)
-
-            GLib.idle_add(self._append_log, "Creating VM disk image...")
-            disk_path = str(paths.vm_storage_dir() / f"{vm_name}.qcow2")
-            backing = os.path.abspath(image_path) if image_path and distro in ["ubuntu", "debian"] else None
-            actual_disk_path = await self.manager.create_disk(disk_path, disk_size, backing_file=backing)
-            if not actual_disk_path:
-                raise RuntimeError("Failed to create disk image.")
-            GLib.idle_add(self.progress_bar.set_fraction, 0.5)
-
-            GLib.idle_add(self._append_log, "Defining VM in libvirt...")
-            xml = self.provisioner.get_libvirt_xml(
-                vm_name, ram, cpu,
-                disk_path=actual_disk_path,
-                cloud_init_path=cloud_init_path,
-                virtio_win_path=virtio_win_path,
-                windows_auto_path=windows_auto_path,
-                iso_path=image_path if distro == "windows" else None,
-                network_name=PROVISION_NETWORK
-            )
-            if not await self.manager.define_vm(xml, vm_name):
-                raise RuntimeError("Failed to define VM.")
-            GLib.idle_add(self.progress_bar.set_fraction, 0.6)
-
-            GLib.idle_add(self._append_log, "Starting VM for installation and configuration...")
-            if not await self.manager.start_vm(vm_name):
-                raise RuntimeError("Failed to start VM.")
-
-            GLib.idle_add(self._append_log, "Waiting for Guest Agent to become ready (may take 5-10 minutes)...")
-            GLib.idle_add(self.progress_bar.set_fraction, 0.7)
-
-            if not await self.manager.wait_for_guest_agent(vm_name, timeout=900):
-                raise RuntimeError("Guest agent timeout. Installation may have failed.")
-
-            if distro == "windows" and procmon_path:
-                GLib.idle_add(self._append_log, "Installing Process Monitor in Windows guest...")
-                await self.manager.stop_vm(vm_name)
-                await self.manager.inject_file(vm_name, procmon_path, "C:\\Users\\analyst\\Desktop\\Procmon.exe")
-                await self.manager.start_vm(vm_name)
-                await self.manager.wait_for_guest_agent(vm_name)
-
-            GLib.idle_add(self._append_log, "Verifying environment tools (strace, tcpdump)...")
-            if distro in ["ubuntu", "debian"]:
-                await self.manager.run_command(vm_name, "apt-get update && apt-get install -y strace tcpdump")
-
-            GLib.idle_add(self._append_log, f"Moving VM onto isolated network '{self.analysis_network}'...")
-            GLib.idle_add(self.progress_bar.set_fraction, 0.85)
-            if not await self.manager.switch_network(vm_name, PROVISION_NETWORK, self.analysis_network):
-                raise RuntimeError("Failed to move VM onto the isolated network.")
-            if not await self.manager.start_vm(vm_name):
-                raise RuntimeError("Failed to restart VM on the isolated network.")
-            if not await self.manager.wait_for_guest_agent(vm_name, timeout=300):
-                raise RuntimeError("Guest agent timeout after network switch.")
-
-            GLib.idle_add(self._append_log, "Taking 'clean-baseline' snapshot...")
-            GLib.idle_add(self.progress_bar.set_fraction, 0.9)
-            if not await self.manager.create_snapshot(vm_name, "clean-baseline", "Automated baseline"):
-                raise RuntimeError("Failed to take baseline snapshot.")
-
-            GLib.idle_add(self.progress_bar.set_fraction, 1.0)
-            GLib.idle_add(self._append_log, "VM Preparation COMPLETED SUCCESSFULLY.")
-            GLib.idle_add(self._append_log, f"Guest console password: {self.provisioner.guest_password}")
-
-        except Exception as e:
-            GLib.idle_add(self._append_log, f"ERROR: {str(e)}")
-            self.logger.error(f"Preparation failed: {e}", exc_info=True)
+        coro = provision_vm(
+            self.backend, vm_name, distro=distro, ram_mb=ram, cpus=cpu, disk_gb=disk_size,
+            analysis_network=self.analysis_network, progress=progress, provisioner=self.provisioner)
+        if self.runner:
+            self.runner.submit(coro, on_done=on_done)
+        else:
+            try:
+                on_done(asyncio.run(coro), None)
+            except Exception as e:
+                on_done(None, e)
 
 
 def main():

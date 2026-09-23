@@ -208,12 +208,13 @@ create_cloud_init_iso() {
     cat > "$user_data" << EOF
 #cloud-config
 package_update: true
-package_upgrade: true
+package_upgrade: false
 packages:
   - qemu-guest-agent
   - strace
   - tcpdump
   - curl
+  - yara
 password: $GUEST_PASSWORD
 chpasswd:
   expire: false

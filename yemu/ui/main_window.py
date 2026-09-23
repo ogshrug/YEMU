@@ -165,11 +165,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_prepare_vm_clicked(self, btn):
         if isinstance(self.orchestrator.vm_manager, MockVMManager):
-            self._append_log("VM preparation needs the libvirt backend (Linux + KVM). Not available in Mock Mode.", "WARN")
+            self._append_log("VM preparation needs a real backend (libvirt or QEMU). Not available in Mock Mode.", "WARN")
             return
         try:
             from yemu.ui.prepare_vm_gui import VMPrepareWindow
-            VMPrepareWindow(parent=self).present()
+            VMPrepareWindow(parent=self, backend=self.orchestrator.vm_manager, runner=self.runner,
+                            on_finished=self._update_vm_list).present()
         except Exception as e:
             self._append_log(f"Failed to open VM preparation window: {e}", "CRITICAL")
 
@@ -423,11 +424,11 @@ class MainWindow(Adw.ApplicationWindow):
         # Check permissions
         self.config = yemu_config.load()
         backend_name = self.config["vm"]["backend"]
-        if backend_name != "mock" and not self._check_group_permissions():
-            vm_mgr = MockVMManager(ui_callback=self._append_log)
-            self._append_log("Starting in Mock Mode due to missing permissions.", "WARN")
-        else:
-            vm_mgr = create_backend(backend_name, ui_callback=self._append_log)
+        vm_mgr = create_backend(backend_name, ui_callback=self._append_log, config=self.config)
+        if vm_mgr.name == "libvirt":
+            # logs which libvirt/kvm groups are missing, if any
+            self._check_group_permissions()
+        self._append_log(f"Using the {vm_mgr.name} VM backend.", "INFO")
 
         self.orchestrator = Orchestrator(self.db, vm_manager=vm_mgr, ui_callback=ui_callback, config=self.config)
 
