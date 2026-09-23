@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (unreleased)
+## 0.6.0 (2026-09-24)
 
 The production-readiness release: YEMU runs natively on Windows and Linux, has a new desktop app, and ships as installable packages.
 
