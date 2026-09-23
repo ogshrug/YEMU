@@ -21,3 +21,6 @@ malware_sandbox.db
 *.egg-info/
 .pytest_cache/
 yemu.db
+.build-venv/
+build/
+dist/

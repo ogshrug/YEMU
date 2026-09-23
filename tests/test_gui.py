@@ -72,6 +72,11 @@ def test_mock_analysis_end_to_end_through_gui(gui, tmp_path):
     assert report.yara_tree.topLevelItemCount() >= 2
     assert report.proc_tree.topLevelItemCount() == 1  # malware_sample -> curl
     assert report.b_model.rowCount() > 0
+    # guest/sample-controlled strings must never be rendered as HTML
+    from PySide6.QtCore import Qt
+
+    assert report.title.textFormat() == Qt.TextFormat.PlainText
+    assert page.result_title.textFormat() == Qt.TextFormat.PlainText
     report.b_type.setCurrentText("network")
     assert 0 < report.b_proxy.rowCount() < report.b_model.rowCount()
 

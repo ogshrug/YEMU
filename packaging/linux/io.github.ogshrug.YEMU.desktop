@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=YEMU
+GenericName=Malware Analysis Sandbox
+Comment=Detonate samples in an isolated VM and review their behaviour
+Exec=yemu-gui
+Icon=io.github.ogshrug.YEMU
+Terminal=false
+Categories=Development;Security;Utility;
+Keywords=malware;sandbox;yara;qemu;security;
+StartupWMClass=yemu-gui

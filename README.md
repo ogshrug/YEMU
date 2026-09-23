@@ -74,9 +74,22 @@ Automated analysis needs Linux guests (Ubuntu or Debian cloud images). A Windows
 
 ## Installation
 
-Requires Python 3.10+ and a CPU with VT-x or AMD-V enabled in firmware.
+You need a CPU with VT-x or AMD-V enabled in firmware, and QEMU (or libvirt on Linux) to run real VMs. `yemu doctor` checks everything.
 
-### Windows
+### From a release (no Python needed)
+
+Download from the [Releases](https://github.com/ogshrug/YEMU/releases) page:
+
+| Package | Contents |
+|---|---|
+| `YEMU-<version>-windows-x64-setup.exe` | Windows installer: Start-menu and desktop shortcuts, and an optional `yemu` entry on PATH. It installs per user by default, so it doesn't need admin. |
+| `YEMU-<version>-windows-x64.zip` | Portable Windows build. Unzip it, then run `yemu-gui.exe` or `yemu.exe`. |
+| `YEMU-<version>-linux-x86_64.tar.gz` | Linux bundle. Unpack it, then run `./install.sh` (for your user) or `sudo ./install.sh --system`. |
+| `yemu-<version>-py3-none-any.whl` | For `pip install` into your own environment. Add `[gui]` for the desktop app. |
+
+Each release lists `SHA256SUMS.txt`. Then install QEMU, or use the setup scripts below for that part, and run `yemu vm create ubuntu-clean`.
+
+### Windows (from source)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1 -CreateVM ubuntu-clean
@@ -103,7 +116,7 @@ yemu vm create ubuntu-clean
 yemu gui
 ```
 
-### Linux (including WSL2)
+### Linux, including WSL2 (from source)
 
 ```bash
 bash scripts/setup_linux.sh               # libvirt + desktop app + CLI
@@ -243,6 +256,11 @@ Each analysis ends with a **status**: `completed`, `failed` (the VM couldn't be 
 
 ## Safety
 
+Read [docs/threat-model.md](docs/threat-model.md) before analysing real malware. It covers what YEMU protects, the trust boundaries between host and guest, and the risks you still have to manage, such as hypervisor escapes, host-side parsers and evasion. To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+The most important points:
+
+
 - **The analysis network is offline by default.** Before every run, YEMU checks the VM's interfaces. If any interface can reach the host LAN or the internet, it logs a `CRITICAL` warning. On libvirt that means a NAT or routed network, or a bridge/direct interface. On qemu it means user-mode networking without `restrict=on`. To deliberately give samples internet access, provision with `YEMU_ALLOW_INTERNET=1 bash scripts/prepare_vm.sh`, and set `allow_internet = true` under `[network]` in the config.
   ```bash
   virsh net-dumpxml malware-analysis   # an isolated network has no <forward> element
@@ -269,14 +287,15 @@ Each analysis ends with a **status**: `completed`, `failed` (the VM couldn't be 
   - The new rule set replaces the old one atomically.
 - Always analyse from a reverted snapshot. The pipeline reverts automatically, but manual (GUI) sessions leave the VM running.
 
-## Testing
+## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest -q
+pip install -e ".[gui,dev]" ruff mypy
+ruff check yemu tests && ruff format --check yemu tests && mypy && pytest -q
+python scripts/build.py [--installer]   # wheel, sdist, PyInstaller bundle (+ Windows installer), smoke-tested
 ```
 
-Tests live in `tests/`. CI (`.github/workflows/tests.yml`) runs them on Ubuntu and Windows with Python 3.10 and 3.12. None of them need a real VM, and they never write to your real data folders, because each test gets its own `YEMU_HOME`.
+Tests live in `tests/`. CI (`.github/workflows/tests.yml`) runs lint and type checks, then runs the tests on Ubuntu and Windows with Python 3.10 and 3.12. Pushing a `vX.Y.Z` tag builds and publishes a release (`.github/workflows/release.yml`). See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. None of them need a real VM, and they never write to your real data folders, because each test gets its own `YEMU_HOME`.
 
 ## Troubleshooting
 
@@ -307,9 +326,12 @@ yemu/
   core/              pipeline, VM backends (libvirt, qemu, mock), guest agent, YARA, parsing, scoring, provisioning
   storage/           SQLite access layer and report writer
   rules/default.yar  built-in YARA rules
+packaging/                 PyInstaller spec, Windows installer (Inno Setup), Linux .desktop + install.sh
+scripts/build.py           builds release artifacts
 scripts/setup_windows.ps1  one-shot Windows setup (QEMU, WHPX check, venv)
 scripts/setup_linux.sh     one-shot Linux / WSL2 setup
 scripts/prepare_vm.sh      shell version of VM preparation (libvirt)
 tests/               pytest suites
 main.py              compatibility launcher for the GUI
+docs/threat-model.md       what YEMU defends against and what it doesn't
 ```

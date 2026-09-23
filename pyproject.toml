@@ -57,7 +57,7 @@ version = { attr = "yemu.__version__" }
 include = ["yemu*"]
 
 [tool.setuptools.package-data]
-yemu = ["rules/*.yar"]
+yemu = ["rules/*.yar", "gui/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

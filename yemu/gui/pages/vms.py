@@ -172,7 +172,7 @@ class VMsPage(QWidget):
         )
 
         self.banner, bl = card(horizontal=True)
-        self.banner_text = label("", wrap=True)
+        self.banner_text = label("", wrap=True, rich=True)
         bl.addWidget(self.banner_text, 1)
         root.addWidget(self.banner)
 

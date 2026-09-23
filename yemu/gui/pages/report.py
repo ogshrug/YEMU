@@ -1,3 +1,4 @@
+import html
 import json
 from typing import Any
 
@@ -151,7 +152,7 @@ class ReportPage(QWidget):
         hl.addLayout(info, 1)
         root.addWidget(header)
 
-        self.status_banner = label("", wrap=True)
+        self.status_banner = label("", wrap=True, rich=True)
         self.status_banner.hide()
         root.addWidget(self.status_banner)
 
@@ -264,7 +265,8 @@ class ReportPage(QWidget):
         if r["status"] in ("failed", "timeout", "interrupted", "running"):
             color = theme.VERDICT_COLORS["suspicious" if r["status"] in ("interrupted", "running") else "malicious"]
             self.status_banner.setText(
-                f"<b>Analysis {r['status']}.</b> {r['error'] or ''} The verdict below may be based on partial results."
+                f"<b>Analysis {html.escape(r['status'])}.</b> {html.escape(r['error'] or '')} "
+                "The verdict below may be based on partial results."
             )
             self.status_banner.setStyleSheet(
                 f"QLabel {{ color: {color}; border: 1px solid {color}; border-radius: 8px; padding: 8px 12px; }}"

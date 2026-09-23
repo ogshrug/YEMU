@@ -1,11 +1,17 @@
 import logging
+import os
 import sys
+from pathlib import Path
 
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from yemu.gui import theme
 from yemu.gui.context import AppContext
 from yemu.gui.main_window import MainWindow
+
+ICON = Path(__file__).resolve().parent / "assets" / "yemu.png"
 
 
 def create_window(app=None, db_path=None):
@@ -24,6 +30,16 @@ def main(argv=None):
     app.setApplicationName("YEMU")
     app.setOrganizationName("YEMU")
     app.setDesktopFileName("io.github.ogshrug.YEMU")
-    _, window = create_window(app)
+    if ICON.is_file():
+        app.setWindowIcon(QIcon(str(ICON)))
+    ctx, window = create_window(app)
     window.show()
+    if os.environ.get("YEMU_SMOKE_TEST"):
+        # packaged-build check: start, let the DB and backend come up, then exit cleanly
+        def finish():
+            ok = ctx.db_ready
+            window.close()
+            app.exit(0 if ok else 1)
+
+        QTimer.singleShot(3000, finish)
     return app.exec()

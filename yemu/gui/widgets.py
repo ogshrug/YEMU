@@ -25,8 +25,10 @@ def card(parent=None, margins=16, spacing=10, horizontal=False):
     return frame, layout
 
 
-def label(text="", object_name=None, wrap=False, selectable=False):
+def label(text="", object_name=None, wrap=False, selectable=False, rich=False):
     lbl = QLabel(text)
+    # plain text unless asked: file names and errors can carry attacker-chosen "<html>"
+    lbl.setTextFormat(Qt.TextFormat.RichText if rich else Qt.TextFormat.PlainText)
     if object_name:
         lbl.setObjectName(object_name)
     lbl.setWordWrap(wrap)
