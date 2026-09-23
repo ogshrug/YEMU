@@ -21,6 +21,7 @@ AppSupportURL=https://github.com/ogshrug/YEMU/issues
 DefaultDirName={autopf}\YEMU
 DefaultGroupName=YEMU
 DisableProgramGroupPage=yes
+LicenseFile=..\..\LICENSE
 OutputDir={#OutputDir}
 OutputBaseFilename=YEMU-{#AppVersion}-windows-x64-setup
 SetupIconFile=..\..\yemu\gui\assets\yemu.ico

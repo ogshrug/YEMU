@@ -335,3 +335,9 @@ tests/               pytest suites
 main.py              compatibility launcher for the GUI
 docs/threat-model.md       what YEMU defends against and what it doesn't
 ```
+
+## License
+
+YEMU is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 Armaan Guha; see [NOTICE](NOTICE).
+
+The planned next steps are in [ROADMAP.md](ROADMAP.md).

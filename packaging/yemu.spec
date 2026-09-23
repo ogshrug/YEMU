@@ -11,6 +11,8 @@ ICON = str(ROOT / "yemu" / "gui" / "assets" / ("yemu.ico" if sys.platform == "wi
 datas = [
     (str(ROOT / "yemu" / "rules" / "default.yar"), "yemu/rules"),
     (str(ROOT / "yemu" / "gui" / "assets"), "yemu/gui/assets"),
+    (str(ROOT / "LICENSE"), "."),
+    (str(ROOT / "NOTICE"), "."),
 ]
 datas += collect_data_files("reportlab")
 hiddenimports = collect_submodules("yemu") + collect_submodules("scapy.layers") + ["pycdlib", "aiosqlite"]
