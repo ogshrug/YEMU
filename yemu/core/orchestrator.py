@@ -225,6 +225,8 @@ class Orchestrator:
                         # Need a method to pull file from VM
                         if hasattr(self.vm_manager, 'pull_file'):
                             await self.vm_manager.pull_file(guest_os, "/tmp/capture.pcap", local_pcap)
+                            if not os.path.exists(local_pcap):
+                                raise RuntimeError("no capture file came back from the guest")
 
                             from yemu.core.network_capture import NetworkCapture
                             net_cap = NetworkCapture()

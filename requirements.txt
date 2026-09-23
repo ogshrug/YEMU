@@ -9,6 +9,8 @@ PyYAML>=6.0
 pycdlib>=1.14
 tomli>=2.0; python_version < "3.11"
 
-# Linux host only (real VMs + GTK app)
+# Desktop app (Windows + Linux)
+PySide6>=6.6
+
+# Linux host with libvirt only
 libvirt-python>=9.0; sys_platform == "linux"
-PyGObject>=3.46; sys_platform == "linux"

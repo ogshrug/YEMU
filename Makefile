@@ -3,11 +3,10 @@
 install-system:
 	sudo apt update && sudo apt install -y qemu-kvm qemu-utils libvirt-daemon-system libvirt-clients \
 		virt-manager virt-viewer libguestfs-tools genisoimage \
-		python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
-		libgtksourceview-5-dev python3-libvirt strace tcpdump yara
+		python3-libvirt strace tcpdump yara libegl1 libxkbcommon-x11-0 libxcb-cursor0
 
 install:
-	pip install -e ".[linux,dev]"
+	pip install -e ".[linux,gui,dev]"
 
 run:
 	yemu gui

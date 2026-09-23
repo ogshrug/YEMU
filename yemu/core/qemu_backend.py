@@ -228,6 +228,9 @@ class QemuBackend(VMBackend):
             self.logger.error(f"Failed to list snapshots for {vm_name}: {e}")
             return []
 
+    async def vm_state(self, vm_name):
+        return "running" if await self.is_running(vm_name) else "stopped"
+
     async def verify_environment(self, vm_name):
         if not self.available():
             return False, "QEMU not found (install QEMU or set [qemu].bin_dir)"

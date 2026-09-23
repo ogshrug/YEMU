@@ -1,6 +1,8 @@
 # YEMU
 
-YEMU is a local malware analysis sandbox for Linux and Windows. It runs a sample inside a disposable QEMU virtual machine (KVM on Linux, Windows Hypervisor Platform on Windows), watches what it does, scans it with YARA, and gives it a 0–100 threat score and a verdict. It has a command-line tool (`yemu`) and a GTK4 / libadwaita desktop app.
+YEMU is a local malware analysis sandbox for Linux and Windows. It runs a sample inside a disposable QEMU virtual machine (KVM on Linux, Windows Hypervisor Platform on Windows), watches what it does, scans it with YARA, and gives it a 0–100 threat score and a verdict. It has a desktop app (Qt, same on both platforms) and a command-line tool (`yemu`).
+
+![YEMU report view](docs/screenshots/report.png)
 
 > [!WARNING]
 > This tool executes real malware. Only run samples on a host you are willing to lose, and check the VM network before every run (see [Safety](#safety)). The project is under active development and is not yet hardened for production use.
@@ -36,7 +38,8 @@ YEMU is a local malware analysis sandbox for Linux and Windows. It runs a sample
 | SQLite storage (`samples`, `analyses`, `events`, `iocs`) | `yemu/storage/db.py` |
 | JSON and PDF reports | `yemu/storage/report_store.py`, `yemu/core/report_generator.py` |
 | Per-user paths and settings | `yemu/paths.py`, `yemu/config.py` |
-| CLI and GUI entry points | `yemu/cli.py`, `yemu/app.py` |
+| CLI and desktop app | `yemu/cli.py`, `yemu/gui/` (PySide6) |
+| Normalized report model (shared by the GUI, CLI and PDF) | `yemu/core/report_model.py` |
 
 ### Scoring
 
@@ -54,7 +57,7 @@ The score is capped at 100. Under 30 is **clean**, 30–69 is **suspicious**, an
 | Host | CLI (`yemu`) | Real VM analysis | Desktop app |
 |---|---|---|---|
 | Linux (Ubuntu 22.04+ / Debian 12+) | Yes | Yes: `libvirt` backend (KVM) or `qemu` backend | Yes |
-| Windows 10/11 | Yes | Yes: `qemu` backend with WHPX acceleration | Not yet. Use WSL2 + WSLg |
+| Windows 10/11 | Yes | Yes: `qemu` backend with WHPX acceleration | Yes |
 | Windows through WSL2 | Yes | Yes (needs nested virtualization for KVM speed) | Yes, through WSLg |
 
 YEMU has three VM backends. `[vm].backend = "auto"` (the default) picks the first one that works:
@@ -92,19 +95,20 @@ winget install SoftwareFreedomConservancy.QEMU
 Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
 py -m venv .venv
 .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e ".[gui,dev]"
 yemu doctor
 yemu vm create ubuntu-clean
+yemu gui
 ```
 
 ### Linux (including WSL2)
 
 ```bash
-bash scripts/setup_linux.sh               # libvirt + GTK app + CLI
+bash scripts/setup_linux.sh               # libvirt + desktop app + CLI
 bash scripts/setup_linux.sh --qemu-only   # lighter: standalone QEMU backend + CLI
 ```
 
-The script installs the apt packages and adds you to the `libvirt` and `kvm` groups (log out and back in afterwards). It then creates `.venv` with system site-packages, which gives it the distro's PyGObject and libvirt, and runs `pip install -e ".[linux,dev]"`.
+The script installs the apt packages, including the Qt runtime libraries, and adds you to the `libvirt` and `kvm` groups (log out and back in afterwards). It then creates `.venv` with system site-packages, which gives it the distro's libvirt bindings, and runs `pip install -e ".[linux,gui,dev]"`.
 
 Inside **WSL2**, the script also:
 
@@ -114,7 +118,7 @@ Inside **WSL2**, the script also:
   [wsl2]
   nestedVirtualization=true
   ```
-- WSLg displays the desktop app on Windows 11.
+- Inside WSL2, WSLg shows the Linux build of the desktop app. On Windows you can also just run the native app.
 
 ## Where data goes
 
@@ -143,6 +147,9 @@ yemu config           # shows the effective settings
 | `[analysis]` | `execution_wait` (seconds before logs are collected) |
 | `[scoring]` | score weights and verdict thresholds |
 | `[rules]` | `repo_url`, `branch` for rule sync |
+| `[ui]` | `theme` (`system`/`light`/`dark`) |
+
+You can also edit all of these on the desktop app's **Settings** page.
 
 ## Preparing an analysis VM
 
@@ -187,18 +194,24 @@ Other VM commands: `yemu vm list`, `yemu vm start <name> [--console]`, `yemu vm 
 
 ## Usage
 
-### Desktop app (Linux, or Windows through WSLg)
+### Desktop app (Windows and Linux)
 
 ```bash
-yemu gui              # or: python main.py
+yemu gui              # or: python main.py, or the yemu-gui launcher
 ```
 
-1. Pick a **VM** and **snapshot** in the sidebar.
-2. Optionally enable **GUI**, which opens `virt-viewer` for manual analysis and skips automated monitoring. You can also enable **PCAP** to capture guest traffic.
-3. Click **Submit File for Analysis** and choose a sample.
-4. Watch progress in the log stream at the bottom. When the run finishes, the **Dashboard** shows the score, YARA hits and behaviour events.
-5. Open earlier runs from **Recent Analyses**. Use the **Reports** tab to read the full report or **Export to PDF**.
-6. Use the **YARA Rules** tab to browse, edit and create rules, or to **Sync Rules** from any GitHub repo and branch.
+| Page | What it does |
+|---|---|
+| **Analyze** | Drag a file onto the drop zone (or click to browse), pick the VM and snapshot, and optionally turn on PCAP or an interactive console session. While it runs, a stage tracker (revert, inject, execute, memory scan, collect, score) shows progress next to a live log. When it finishes, a result card shows the score and verdict. |
+| **History** | Every analysis, with verdict counts, search by file name or ID, and a verdict filter. Double-click a row to open its report. |
+| **Report** | Score gauge and verdict. Hashes and times. Counts of YARA hits, processes, file operations and network IOCs. Tabs for the **process tree**, **YARA** matches (with matched strings), a filterable **behaviour** timeline, **network** IOCs and raw JSON. Export to PDF or JSON. |
+| **VMs** | Shows the backend and its acceleration, and each VM's state and snapshots. Create a VM (with live progress), start, stop, open its console, or delete it. |
+| **YARA rules** | Built-in rules (read-only), your own rules and synced rule sets, in an editor with syntax highlighting. **Validate** compiles the rule, and saving also checks it. Sync rules from any GitHub repo and branch. |
+| **Settings** | Backend, default VM and snapshot, timeouts, QEMU folder and acceleration, the network-isolation override, theme and rule source. Also shows where data is stored, and **Run checks** runs `yemu doctor`. |
+
+Shortcuts: `Ctrl+O` opens a sample, and `Ctrl+1` to `Ctrl+5` switch pages. The theme follows the system light/dark setting unless you set one in Settings.
+
+![Analyze page, dark theme](docs/screenshots/analyze-dark.png)
 
 ### Command line (Linux and Windows)
 
@@ -244,6 +257,7 @@ Tests live in `tests/`. CI (`.github/workflows/tests.yml`) runs them on Ubuntu a
 | "VM not found" | Check `virsh list --all`. The name must match exactly. |
 | Guest agent timeout | Check that the agent channel exists in the domain XML and that `systemctl status qemu-guest-agent` shows it running in the guest. |
 | `malware-analysis` network missing | The app tries to create it. To create it manually, use `virsh net-define <xml>`, then `virsh net-start malware-analysis` and `virsh net-autostart malware-analysis`. |
+| `yemu gui` says PySide6 is missing | `pip install -e ".[gui]"`. On Linux, also install `libegl1 libxkbcommon-x11-0 libxcb-cursor0` (the setup script does this). |
 | App shows "Mock Mode" | No backend is available. Run `yemu doctor`: it checks QEMU, acceleration, libvirt and your groups. |
 | Windows: `doctor` reports `tcg` instead of `whpx` | Enable **Windows Hypervisor Platform** (see Installation) and reboot. TCG works, but it's slow. |
 | Windows: QEMU exits with `WHPX: Unexpected VP exit code 4` | Don't force a CPU model. Remove `-cpu` from `[qemu].extra_args`. YEMU already uses the default CPU model under WHPX. |
@@ -253,13 +267,13 @@ Tests live in `tests/`. CI (`.github/workflows/tests.yml`) runs them on Ubuntu a
 
 ```
 yemu/
-  app.py             GTK4 / libadwaita application
+  app.py             desktop app launcher
+  gui/               PySide6 app: main window, theme, widgets, pages/ (analyze, history, report, vms, rules, settings)
   cli.py             `yemu` command-line interface
   paths.py           per-user data/config/cache locations
   config.py          config.toml loading and defaults
   core/              pipeline, VM backends (libvirt, qemu, mock), guest agent, YARA, parsing, scoring, provisioning
   storage/           SQLite access layer and report writer
-  ui/                GTK widgets and the VM-preparation window
   rules/default.yar  built-in YARA rules
 scripts/setup_windows.ps1  one-shot Windows setup (QEMU, WHPX check, venv)
 scripts/setup_linux.sh     one-shot Linux / WSL2 setup

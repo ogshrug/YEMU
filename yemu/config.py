@@ -3,6 +3,7 @@ User settings loaded from paths.config_file() (config.toml). Every key is option
 missing keys fall back to DEFAULTS. `yemu config --init` writes a commented template.
 """
 import copy
+import json
 import logging
 
 try:
@@ -51,6 +52,9 @@ DEFAULTS = {
         "repo_url": "https://github.com/Yara-Rules/rules",
         "branch": "master",
     },
+    "ui": {
+        "theme": "system",              # system | light | dark
+    },
 }
 
 TEMPLATE = r"""# YEMU configuration. Every key is optional; defaults are shown.
@@ -87,6 +91,9 @@ malicious_threshold = 70
 [rules]
 repo_url = "https://github.com/Yara-Rules/rules"
 branch = "master"
+
+[ui]
+theme = "system"            # system | light | dark
 """
 
 
@@ -123,3 +130,30 @@ def write_template(path=None, overwrite=False):
         return path, False
     path.write_text(TEMPLATE, encoding="utf-8")
     return path, True
+
+
+def _toml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    return json.dumps(str(value))  # JSON string escaping is valid TOML basic-string escaping
+
+
+def dumps(cfg):
+    """Serialise a config dict (tables of scalars/lists) to TOML."""
+    lines = ["# YEMU configuration (written by YEMU; `yemu config --init --force` restores the commented template)"]
+    for section, values in cfg.items():
+        lines.append("")
+        lines.append(f"[{section}]")
+        for key, value in values.items():
+            lines.append(f"{key} = {_toml_value(value)}")
+    return "\n".join(lines) + "\n"
+
+
+def save(cfg, path=None):
+    path = path or paths.config_file()
+    path.write_text(dumps(cfg), encoding="utf-8")
+    return path

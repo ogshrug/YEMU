@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Set up YEMU on Debian/Ubuntu, including inside WSL2 on Windows.
-#   bash scripts/setup_linux.sh            # full install (libvirt + GTK app + CLI)
-#   bash scripts/setup_linux.sh --qemu-only  # skip libvirt; use the standalone QEMU backend
+#   bash scripts/setup_linux.sh            # full install (libvirt + desktop app + CLI)
+#   bash scripts/setup_linux.sh --qemu-only  # skip libvirt; standalone QEMU backend + desktop app
 set -euo pipefail
 
 QEMU_ONLY=0
@@ -34,11 +34,11 @@ if [[ $IS_WSL == 1 ]]; then
     fi
 fi
 
-PKGS=(qemu-system-x86 qemu-utils python3-venv python3-pip yara strace)
+# libegl1/libxkbcommon/libxcb-cursor0: runtime libraries for the Qt desktop app
+PKGS=(qemu-system-x86 qemu-utils python3-venv python3-pip yara strace libegl1 libxkbcommon-x11-0 libxcb-cursor0)
 if [[ $QEMU_ONLY == 0 ]]; then
     PKGS+=(qemu-kvm libvirt-daemon-system libvirt-clients virt-manager virt-viewer libguestfs-tools
-           genisoimage python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 libgtksourceview-5-dev
-           python3-libvirt tcpdump)
+           genisoimage python3-libvirt tcpdump)
 fi
 log "Installing packages: ${PKGS[*]}"
 sudo apt-get update
@@ -55,16 +55,16 @@ elif [[ -e /dev/kvm ]] && ! id -nG "$USER" | grep -qw kvm; then
 fi
 
 if [[ ! -d .venv ]]; then
-    log "Creating .venv (with system site-packages, for the distro's PyGObject/libvirt)"
+    log "Creating .venv (with system site-packages, for the distro's libvirt bindings)"
     python3 -m venv .venv --system-site-packages
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 pip install --upgrade pip >/dev/null
 if [[ $QEMU_ONLY == 0 ]]; then
-    pip install -e ".[linux,dev]"
+    pip install -e ".[linux,gui,dev]"
 else
-    pip install -e ".[dev]"
+    pip install -e ".[gui,dev]"
 fi
 
 log "Running yemu doctor"
@@ -72,4 +72,4 @@ yemu doctor || true
 echo
 log "Done. Activate with: source .venv/bin/activate"
 echo "    yemu vm create ubuntu-clean   # build an isolated analysis VM"
-echo "    yemu gui                      # desktop app (needs a display, or WSLg on Windows)"
+echo "    yemu gui                      # desktop app (needs a display; WSLg works inside WSL2)"

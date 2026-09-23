@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Legacy Linux-only VM preparation (zenity UI). The app uses yemu/ui/prepare_vm_gui.py;
+# Legacy Linux-only VM preparation (zenity UI). The app and `yemu vm create` use yemu/core/provisioning.py;
 # this script is kept for headless/scripted setups and follows the same network model.
 set -euo pipefail
 

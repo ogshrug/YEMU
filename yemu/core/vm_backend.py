@@ -44,6 +44,10 @@ class VMBackend(ABC):
     @abstractmethod
     def list_snapshots(self, vm_name): ...
 
+    async def vm_state(self, vm_name):
+        """'running', 'stopped' or 'unknown'."""
+        return "unknown"
+
     @abstractmethod
     async def verify_environment(self, vm_name):
         """Return (ok: bool, message: str)."""

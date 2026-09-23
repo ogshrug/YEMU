@@ -66,7 +66,7 @@ if (-not (Test-Path $VenvDir)) {
 $venvPy = Join-Path $VenvDir "Scripts\python.exe"
 Step "Installing YEMU and dependencies..."
 & $venvPy -m pip install --upgrade pip | Out-Null
-& $venvPy -m pip install -e ".[dev]"
+& $venvPy -m pip install -e ".[gui,dev]"
 
 $yemu = Join-Path $VenvDir "Scripts\yemu.exe"
 Step "Running yemu doctor"
@@ -79,5 +79,6 @@ if ($CreateVM) {
 
 Write-Host ""
 Step "Done. Activate with:  $VenvDir\Scripts\Activate.ps1"
+Write-Host "    yemu gui                         # desktop app"
 Write-Host "    yemu vm create ubuntu-clean      # build an isolated analysis VM"
 Write-Host "    yemu analyze C:\path\to\sample   # detonate a sample"

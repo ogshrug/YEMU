@@ -248,15 +248,12 @@ def cmd_doctor(args, cfg):
             _check(mod, False, str(e).splitlines()[0])
     _check("built-in rules", paths.BUILTIN_RULES_FILE.is_file(), str(paths.BUILTIN_RULES_FILE))
 
-    print("\nGUI:")
+    print("\nDesktop app:")
     try:
-        import gi
-        gi.require_version("Gtk", "4.0")
-        gi.require_version("Adw", "1")
-        from gi.repository import Gtk, Adw  # noqa: F401
-        _check("GTK 4 + libadwaita", True)
+        import PySide6
+        _check("PySide6 (Qt)", True, PySide6.__version__)
     except Exception as e:
-        _check("GTK 4 + libadwaita", False, f"{type(e).__name__} (GUI needs Linux or WSL2)")
+        _check("PySide6 (Qt)", False, f"{type(e).__name__}: pip install \"yemu[gui]\"")
 
     print("\nVM backend (qemu, works on Windows and Linux):")
     from yemu.core.qemu_backend import QemuBackend
@@ -317,7 +314,7 @@ def build_parser():
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("gui", help="launch the desktop app (Linux / WSL2)").set_defaults(func=cmd_gui)
+    sub.add_parser("gui", help="launch the desktop app").set_defaults(func=cmd_gui)
 
     p = sub.add_parser("analyze", help="detonate a sample and print the verdict")
     p.add_argument("sample")

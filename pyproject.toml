@@ -29,15 +29,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Linux host: real VMs + desktop app. PyGObject/libvirt are usually taken from the
-# distro (python3-gi, python3-libvirt) via `python3 -m venv --system-site-packages`.
+# Desktop app (Qt; Windows + Linux)
+gui = [
+    "PySide6>=6.6",
+]
+# Linux host with libvirt. libvirt-python is usually taken from the distro
+# (python3-libvirt) via `python3 -m venv --system-site-packages`.
 linux = [
     "libvirt-python>=9.0; sys_platform == 'linux'",
-    "PyGObject>=3.46; sys_platform == 'linux'",
 ]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "PySide6>=6.6",
 ]
 
 [project.scripts]
