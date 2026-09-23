@@ -1,9 +1,16 @@
 name: release
 
-# Tag vX.Y.Z to publish a GitHub release; run manually to just build the artifacts.
+# Tag vX.Y.Z to publish a GitHub release. Pushes that touch packaging only build and
+# smoke-test the artifacts (no release), so installer breakage is caught early.
 on:
   push:
     tags: ["v*"]
+    branches: [main, production-readiness]
+    paths:
+      - "packaging/**"
+      - "scripts/build.py"
+      - "pyproject.toml"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
