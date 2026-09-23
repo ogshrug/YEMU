@@ -312,7 +312,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.set_title("Malware Sandbox")
+        self.set_title("YEMU")
         self.set_default_size(1200, 900)
 
         # Toast Overlay

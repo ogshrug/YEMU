@@ -43,7 +43,7 @@ def load_css():
     except Exception as e:
         logger.warning(f"Could not load CSS: {e}")
 
-class MalwareSandboxApp(Adw.Application):
+class YemuApp(Adw.Application):
     def __init__(self, **kwargs):
         super().__init__(application_id='com.jules.malwaresandbox',
                          flags=Gio.ApplicationFlags.FLAGS_NONE,
@@ -61,5 +61,5 @@ if __name__ == "__main__":
     if Gtk is None:
         print("Critical Error: Gtk not found. Exiting.")
         sys.exit(1)
-    app = MalwareSandboxApp()
+    app = YemuApp()
     sys.exit(app.run(sys.argv))

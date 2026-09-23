@@ -1,6 +1,6 @@
-# Running MalSandbox
+# Running YEMU
 
-This guide explains how to set up and run the Malware Analysis Sandbox.
+This guide explains how to set up and run YEMU.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ pip install -r requirements.txt
 The sandbox requires a pre-configured Virtual Machine in libvirt. You can either prepare it manually or use the built-in automated tool.
 
 ### Automated VM Preparation (Recommended)
-1. Launch MalSandbox: `python main.py`.
+1. Launch YEMU: `python main.py`.
 2. Click **Prepare New VM**.
 3. Fill in the VM Name, Distro (Ubuntu, Debian, or Windows), RAM, CPU, and Disk size.
 4. Click **Prepare VM** and wait for the process to complete (this includes downloading images, automated installation, and snapshotting).

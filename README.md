@@ -1,6 +1,6 @@
-# MalSandbox
+# YEMU
 
-A local malware analysis sandbox with a GTK4 / libadwaita desktop UI. It runs a sample inside a disposable QEMU/KVM virtual machine, watches what it does, scans it with YARA, and gives it a 0–100 threat score and a verdict.
+YEMU is a local malware analysis sandbox with a GTK4 / libadwaita desktop UI. It runs a sample inside a disposable QEMU/KVM virtual machine, watches what it does, scans it with YARA, and gives it a 0–100 threat score and a verdict.
 
 > [!WARNING]
 > This tool executes real malware. Only run samples on a host you are willing to lose, and check the VM network before every run (see [Safety](#safety)). The project is under active development and is not yet hardened for production use.

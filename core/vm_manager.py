@@ -514,7 +514,7 @@ class MockVMManager:
             return """
 suspicious_process [malware,stealer] /proc/1234/mem
 description: "Matched a suspicious pattern in memory"
-author: "MalSandbox"
+author: "YEMU"
 0x10000:$s1: 58 50 45 4e 44 41 54 41
 0x10500:$s2: malicious_function_name
 
