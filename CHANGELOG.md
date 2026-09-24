@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1 (2026-09-24)
+
+- Licensed under the Apache License 2.0. `LICENSE` and `NOTICE` are included in the Python packages, the Windows installer (shown as the license page) and the portable and Linux bundles.
+- Added `ROADMAP.md` with the planned work after 0.6.0.
+
+No functional changes since 0.6.0.
+
 ## 0.6.0 (2026-09-24)
 
 The production-readiness release: YEMU runs natively on Windows and Linux, has a new desktop app, and ships as installable packages.
