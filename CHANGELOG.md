@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (unreleased)
+## 0.7.0 (2026-09-29)
 
 ### YARA rules
 - The default rule source is now **YARA Forge core**, a curated weekly bundle of about 5,100 rules from around 40 maintained repositories. The previous default, `Yara-Rules/rules`, hadn't changed since 2022. `extended` and `full` packages are available, and any GitHub rule repository can still be used.
