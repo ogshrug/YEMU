@@ -87,6 +87,10 @@ class YaraHighlighter(QSyntaxHighlighter):
             start = text.find("/*", end + 2)
 
 
+MAX_EDITOR_BYTES = 1024 * 1024
+RULE_LINE = re.compile(r"^\s*(?:private\s+|global\s+)*rule\s+\w+")
+
+
 class _SyncProgress(QObject):
     progress = Signal(int, int, str)
 
@@ -159,18 +163,15 @@ class RulesPage(QWidget):
 
         # bottom: sync
         sync, sl = card(horizontal=True)
-        sl.addWidget(label("Sync from GitHub", "SectionTitle"))
-        self.repo = QLineEdit(ctx.config["rules"]["repo_url"])
-        self.branch = QLineEdit(ctx.config["rules"]["branch"])
-        self.branch.setMaximumWidth(120)
-        self.sync_btn = button("Sync", "download")
+        sl.addWidget(label("Rule updates", "SectionTitle"))
+        self.sync_info = label("", "Muted", wrap=True)
+        sl.addWidget(self.sync_info, 1)
+        self.sync_btn = button("Update now", "download")
         self.sync_btn.clicked.connect(self._sync)
         self.sync_bar = QProgressBar()
         self.sync_bar.setFixedHeight(8)
         self.sync_bar.setMaximumWidth(160)
         self.sync_bar.hide()
-        sl.addWidget(self.repo, 1)
-        sl.addWidget(self.branch)
         sl.addWidget(self.sync_bar)
         sl.addWidget(self.sync_btn)
         root.addWidget(sync)
@@ -178,6 +179,7 @@ class RulesPage(QWidget):
         self._progress = _SyncProgress()
         self._progress.progress.connect(self._on_sync_progress)
         self._set_editable(False)
+        ctx.config_changed.connect(self._describe_source)
         self.refresh()
 
     # --- files ---
@@ -187,6 +189,7 @@ class RulesPage(QWidget):
         return d
 
     def refresh(self):
+        self._describe_source()
         self.tree.clear()
         groups = [
             ("Built-in (read-only)", [paths.BUILTIN_RULES_FILE], True, paths.BUILTIN_RULES_FILE.parent),
@@ -200,7 +203,8 @@ class RulesPage(QWidget):
             and self._custom_dir() not in p.parents
             and not any(part.startswith(".") for part in p.relative_to(synced_root).parts)
         )
-        groups.append((f"Synced ({len(synced)})", synced, False, synced_root))
+        # synced sets are replaced on every update, so edits there would be lost: read-only
+        groups.append((f"Synced, read-only ({len(synced)})", synced, True, synced_root))
         for title, files, ro, base in groups:
             top = QTreeWidgetItem([title])
             f = top.font(0)
@@ -244,7 +248,18 @@ class RulesPage(QWidget):
             return
         path, ro = Path(data[0]), data[1]
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            size = path.stat().st_size
+            if size > MAX_EDITOR_BYTES:
+                # curated bundles hold thousands of rules; highlighting them would freeze the UI
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    rule_count = sum(1 for line in f if RULE_LINE.match(line))
+                text = (
+                    f"// {path.name}: {size / 1048576:.1f} MB, {rule_count:,} rules.\n"
+                    "// Too large to show here. It is loaded for every analysis; open it in a text editor.\n"
+                )
+                ro = True
+            else:
+                text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             self.status.setText(f"Could not open {path}: {e}")
             return
@@ -346,41 +361,41 @@ class RulesPage(QWidget):
         self.status.setText(f"Saved {self.current[0]}")
 
     # --- sync ---
-    def _sync(self):
-        from yemu.core.yara_sync import YaraRuleSync
+    def _describe_source(self):
+        from yemu.core.yara_sync import last_sync
 
+        r = self.ctx.config["rules"]
+        source = f"YARA Forge {r['package']}" if r["source"] == "yara-forge" else r["repo_url"]
+        auto = f"auto-update every {r['update_interval_days']} days" if r["auto_update"] else "auto-update off"
+        m = last_sync()
+        synced = f"last synced {m['commit']} on {m['timestamp'][:10]}" if m else "never synced"
+        self.sync_info.setText(f"Source: {source} · {synced} · {auto}. Change the source in Settings.")
+
+    def _sync(self):
         self.sync_btn.setEnabled(False)
         self.sync_bar.show()
         self.sync_bar.setValue(0)
-        try:
-            sync = YaraRuleSync(
-                repo_url=self.repo.text().strip(),
-                branch=self.branch.text().strip() or "master",
-                ref=self.ctx.config["rules"]["ref"],
-                max_download_mb=self.ctx.config["rules"]["max_download_mb"],
-            )
-        except Exception as e:
-            self.sync_btn.setEnabled(True)
-            self.sync_bar.hide()
-            QMessageBox.warning(self, "YEMU", str(e))
-            return
 
         def done(manifest):
             self.sync_btn.setEnabled(True)
             self.sync_bar.hide()
             self.status.setStyleSheet("")
             self.status.setText(
-                f"Synced {manifest.get('file_count', 0)} rules at {str(manifest.get('commit', ''))[:12]}"
-                f" ({len(manifest.get('skipped_files', []))} skipped)"
+                f"Synced {manifest.get('set_name')} {manifest.get('commit', '')}: {manifest.get('file_count', 0)} "
+                f"rule files ({len(manifest.get('skipped_files', []))} skipped)"
             )
-            self.refresh()
 
         def failed(e):
             self.sync_btn.setEnabled(True)
             self.sync_bar.hide()
             QMessageBox.warning(self, "YEMU", f"Rule sync failed: {e}")
 
-        self.ctx.bridge.call_sync(sync.sync, self._progress.progress.emit, on_result=done, on_error=failed)
+        if self.ctx.rules_syncing:
+            self.status.setText("A rule update is already running.")
+            self.sync_btn.setEnabled(True)
+            self.sync_bar.hide()
+            return
+        self.ctx.sync_rules(progress=self._progress.progress.emit, on_done=done, on_error=failed)
 
     def _on_sync_progress(self, current, total, _name):
         self.sync_bar.setRange(0, max(total, 1))

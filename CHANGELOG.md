@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+### YARA rules
+- The default rule source is now **YARA Forge core**, a curated weekly bundle of about 5,100 rules from around 40 maintained repositories. The previous default, `Yara-Rules/rules`, hadn't changed since 2022. `extended` and `full` packages are available, and any GitHub rule repository can still be used.
+- Rules update automatically in the background (every 7 days by default, configurable). New commands: `yemu update rules [--force]`. `yemu sync-rules --package`.
+- A successful sync replaces earlier YEMU-downloaded rule sets, so switching sources doesn't leave stale rules loaded. Hand-written rules are kept.
+- Synced rule sets are read-only in the editor. Very large bundles show a summary instead of freezing the UI.
+
+### App updates
+- The desktop app checks GitHub for new YEMU releases at startup (at most daily, can be turned off). The update offer matches how YEMU was installed: installer, portable zip, pip or Linux bundle.
+- Downloads are verified against the release's `SHA256SUMS.txt` before anything is installed.
+- New commands: `yemu update` and `yemu update app`. A new **Settings → Updates** section, and a **Check for updates now** button.
+
 ## 0.6.1 (2026-09-24)
 
 - Licensed under the Apache License 2.0. `LICENSE` and `NOTICE` are included in the Python packages, the Windows installer (shown as the license page) and the portable and Linux bundles.

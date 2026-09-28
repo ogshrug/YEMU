@@ -54,10 +54,19 @@ DEFAULTS = {
         "malicious_threshold": 70,
     },
     "rules": {
-        "repo_url": "https://github.com/Yara-Rules/rules",
+        "source": "yara-forge",  # yara-forge (curated weekly bundle) | github-repo
+        "package": "core",  # YARA Forge package: core (fewest false positives) | extended | full
+        "repo_url": "https://github.com/Yara-Rules/rules",  # used when source = github-repo
         "branch": "master",
-        "ref": "",  # pin to a commit SHA or tag; empty = latest commit of `branch`
+        "ref": "",  # pin a release tag (yara-forge) or commit/tag (github-repo); empty = latest
         "max_download_mb": 100,
+        "auto_update": True,  # re-sync in the background when the rules are older than the interval
+        "update_interval_days": 7,
+    },
+    "updates": {
+        "check_on_startup": True,  # the desktop app checks GitHub for a newer YEMU release
+        "include_prereleases": False,
+        "check_interval_hours": 24,
     },
     "ui": {
         "theme": "system",  # system | light | dark
@@ -100,10 +109,19 @@ suspicious_threshold = 30
 malicious_threshold = 70
 
 [rules]
-repo_url = "https://github.com/Yara-Rules/rules"
+source = "yara-forge"       # yara-forge (curated weekly bundle) | github-repo
+package = "core"            # yara-forge package: core | extended | full
+repo_url = "https://github.com/Yara-Rules/rules"   # used when source = "github-repo"
 branch = "master"
-ref = ""                    # pin a commit SHA or tag; empty = latest commit of branch
+ref = ""                    # pin a release tag / commit; empty = latest
 max_download_mb = 100
+auto_update = true          # re-sync in the background when older than the interval
+update_interval_days = 7
+
+[updates]
+check_on_startup = true     # desktop app checks GitHub for a newer YEMU release
+include_prereleases = false
+check_interval_hours = 24
 
 [ui]
 theme = "system"            # system | light | dark

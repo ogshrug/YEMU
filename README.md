@@ -31,7 +31,8 @@ YEMU is a local malware analysis sandbox for Linux and Windows. It runs a sample
 | Standalone QEMU backend (Windows + Linux) and guest-agent client | `yemu/core/qemu_backend.py`, `yemu/core/qga.py` |
 | Shared VM preparation flow | `yemu/core/provisioning.py`, `yemu/core/vm_provisioner.py` |
 | YARA scanning and rule compilation | `yemu/core/yara_engine.py` |
-| Rule sync from GitHub (default: [Yara-Rules/rules](https://github.com/Yara-Rules/rules)) | `yemu/core/yara_sync.py` |
+| Rule sync (default: [YARA Forge](https://github.com/YARAHQ/yara-forge) core, refreshed weekly) | `yemu/core/yara_sync.py` |
+| App and rule update checks | `yemu/core/updates.py` |
 | strace / Procmon parsing | `yemu/core/behaviour_monitor.py` |
 | PCAP → IP and domain IOCs (scapy) | `yemu/core/network_capture.py` |
 | Scoring and verdict (weights set in config) | `yemu/core/threat_scorer.py` |
@@ -162,10 +163,47 @@ yemu config           # shows the effective settings
 | `[network]` | `name`, `allow_internet` (turns off the isolation warning) |
 | `[analysis]` | `execution_wait` (seconds before logs are collected), `timeout`, `max_sample_mb`, `max_events`, `max_pcap_mb` |
 | `[scoring]` | score weights and verdict thresholds |
-| `[rules]` | `repo_url`, `branch`, `ref` (pin a commit or tag), `max_download_mb` |
+| `[rules]` | `source` (`yara-forge`/`github-repo`), `package` (`core`/`extended`/`full`), `repo_url` and `branch` (for `github-repo`), `ref` (pin a release tag or commit), `auto_update`, `update_interval_days`, `max_download_mb` |
+| `[updates]` | `check_on_startup`, `include_prereleases`, `check_interval_hours` |
 | `[ui]` | `theme` (`system`/`light`/`dark`) |
 
 You can also edit all of these on the desktop app's **Settings** page.
+
+## Updates
+
+### YARA rules
+
+YEMU's default rule source is **[YARA Forge](https://github.com/YARAHQ/yara-forge)**. It's a curated, deduplicated and quality-tested bundle built from about 40 actively maintained rule repositories, including Florian Roth's signature-base, Elastic and ReversingLabs, and it's republished every week.
+
+| Package | Rules (Sept 2026) | Use it when |
+|---|---|---|
+| `core` (default) | ~5,100 | You want high-confidence detections and few false positives |
+| `extended` | ~10,700 | You'd rather see more hits and don't mind triaging a few false positives |
+| `full` | everything | You're researching or hunting and noise is acceptable |
+
+With `[rules].auto_update = true` (the default), the desktop app re-syncs the rules in the background when they're older than `update_interval_days` (7 by default), or when you switch to a different source. From the command line:
+
+```bash
+yemu update rules            # sync if an update is due
+yemu update rules --force    # sync now
+yemu sync-rules --package extended
+yemu sync-rules --repo https://github.com/<owner>/<repo> --branch main   # any GitHub rule repository
+```
+
+To automate this on a server, schedule `yemu update rules` with cron or Task Scheduler. A successful sync replaces rule sets that YEMU downloaded earlier from other sources. Your own rules, in the **My rules** group or the `rules/custom` folder, are never touched.
+
+### YEMU itself
+
+The desktop app checks GitHub for a newer release when it starts, at most once a day. You can turn this off under **Settings → Updates** or with `[updates].check_on_startup = false`. When there's a new version, a **Update to x.y.z** button appears in the sidebar:
+
+| How YEMU is installed | What happens |
+|---|---|
+| Windows installer | **Download and install** fetches the new installer, verifies it against the release's `SHA256SUMS.txt`, closes YEMU and starts the installer. Your data is kept. |
+| Portable zip | Downloads and verifies the new zip, then opens its folder. Unzip it over your current copy. |
+| pip / source | Shows the `pip install --upgrade` command for the release wheel. |
+| Linux bundle | Links to the new tarball. Re-run `install.sh`. |
+
+On the command line, `yemu update` reports whether an app or rule update is available, and `yemu update app` downloads and verifies the new version. Nothing is downloaded or installed without you asking, and update checks contact only `api.github.com` and `github.com`.
 
 ## Preparing an analysis VM
 
@@ -222,7 +260,7 @@ yemu gui              # or: python main.py, or the yemu-gui launcher
 | **History** | Every analysis, with verdict counts, search by file name or ID, and a verdict filter. Double-click a row to open its report. |
 | **Report** | Score gauge and verdict. Hashes and times. Counts of YARA hits, processes, file operations and network IOCs. Tabs for the **process tree**, **YARA** matches (with matched strings), a filterable **behaviour** timeline, **network** IOCs and raw JSON. Export to PDF or JSON. |
 | **VMs** | Shows the backend and its acceleration, and each VM's state and snapshots. Create a VM (with live progress), start, stop, open its console, or delete it. |
-| **YARA rules** | Built-in rules (read-only), your own rules and synced rule sets, in an editor with syntax highlighting. **Validate** compiles the rule, and saving also checks it. Sync rules from any GitHub repo and branch. |
+| **YARA rules** | Built-in rules (read-only), your own rules and synced rule sets, in an editor with syntax highlighting. **Validate** compiles the rule, and saving also checks it. Synced sets are read-only, because each update replaces them. **Update now** re-syncs the configured source. |
 | **Settings** | Backend, default VM and snapshot, timeouts, QEMU folder and acceleration, the network-isolation override, theme and rule source. Also shows where data is stored, and **Run checks** runs `yemu doctor`. |
 
 Shortcuts: `Ctrl+O` opens a sample, and `Ctrl+1` to `Ctrl+5` switch pages. The theme follows the system light/dark setting unless you set one in Settings.
@@ -239,7 +277,8 @@ yemu analyze sample.bin --backend mock --json
 yemu reports                                  # recent analyses
 yemu report 12                                # one analysis + events, as JSON
 yemu list-vms
-yemu sync-rules [--repo URL --branch BRANCH --ref SHA_OR_TAG]
+yemu update [check | rules [--force] | app]  # app + rule updates
+yemu sync-rules [--package core|extended|full | --repo URL --branch BRANCH] [--ref TAG_OR_SHA]
 yemu paths | yemu config [--init] | yemu doctor
 ```
 
@@ -280,11 +319,12 @@ The most important points:
   The VM is always powered off at the end, even after a crash.
 - **Guest output is treated as hostile.** Each run uses a random working folder in the guest (`/tmp/yemu-<random>`). All guest commands are shell-quoted. File names read back from the guest are checked against a strict pattern. The in-guest memory scan only looks at the sample's own processes.
 - **YARA rule sync is pinned and sandboxed.**
-  - The branch is resolved to an exact commit, which is recorded in the manifest. To pin a tag or SHA, set `[rules].ref`.
+  - The version is resolved to an exact YARA Forge release tag or git commit and recorded in the manifest. To pin one, set `[rules].ref`.
   - Downloads (`max_download_mb`) and individual rule files are size-capped.
   - Archive paths can't escape the rules folder.
   - Every rule must compile.
   - The new rule set replaces the old one atomically.
+- **App updates are verified, not signed.** Downloads are checked against the release's SHA-256 checksums, which protects against corrupted or tampered downloads in transit, but not against a compromised GitHub account. Code signing is on the [roadmap](ROADMAP.md).
 - Always analyse from a reverted snapshot. The pipeline reverts automatically, but manual (GUI) sessions leave the VM running.
 
 ## Development

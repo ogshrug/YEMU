@@ -34,6 +34,9 @@ def main(argv=None):
         app.setWindowIcon(QIcon(str(ICON)))
     ctx, window = create_window(app)
     window.show()
+    if not os.environ.get("YEMU_SMOKE_TEST") and not os.environ.get("YEMU_NO_UPDATE_CHECK"):
+        # after the window is up, so a slow network never delays startup
+        QTimer.singleShot(2000, ctx.run_background_updates)
     if os.environ.get("YEMU_SMOKE_TEST"):
         # packaged-build check: start, let the DB and backend come up, then exit cleanly
         def finish():

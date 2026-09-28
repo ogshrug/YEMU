@@ -50,6 +50,7 @@ Out of scope: a malicious local user with access to the host account, and supply
 | Command injection through guest data | Guest paths are random per run and `shlex`-quoted. Guest file listings are only accepted if they match `strace.<pid>`. Memory-scan PIDs must be numeric. No guest-supplied string is ever interpolated into a host command. |
 | Host disk filled by the guest | The PCAP size is checked before it is pulled back. Events are capped, and guest command output is bounded by the agent's timeouts. |
 | Malicious rule archive | GitHub URLs only. The commit is pinned or resolved and recorded. Downloads and individual files are size-capped. Zip-slip paths are rejected. Every rule must compile. The new set is staged and swapped in atomically. |
+| Tampered updates | App updates are downloaded only when the user confirms, and are verified against the release's `SHA256SUMS.txt`. Rule updates go through the same pinned, size-capped and zip-slip-safe sync as manual syncs. |
 | Guest credentials | Each VM gets a random console password, and SSH password login is off. YEMU only talks to the guest through the agent. |
 | Forged report content | Reports escape guest strings (the PDF uses ReportLab's `escape`). The GUI renders guest data as plain text, never HTML. Scoring only counts behaviour attributed to the sample's own process tree. |
 
@@ -59,6 +60,7 @@ Out of scope: a malicious local user with access to the host account, and supply
 - **Host-side parsers.** scapy (PCAP), YARA and ReportLab parse attacker-influenced data on the host. A parser bug could be exploitable. Running YEMU as an unprivileged user limits the damage. Never run it as root or Administrator.
 - **Evasion.** Samples can detect VMs, strace, or the lack of a network, and then behave benignly. A `clean` verdict means "nothing observed", not "safe".
 - **Guest agent trust.** Output from the guest (strace logs, YARA hits in memory) is produced inside a compromised machine and can be forged by a root-level sample. Treat it as evidence, not proof.
+- **Update trust.** Checksums come from the same GitHub release as the files they cover. They catch corruption and tampering in transit, but not a compromised release account. Releases aren't code-signed yet (see the roadmap). The same applies to third-party rule sources such as YARA Forge: a malicious rule can cause false verdicts or slow scans, but it can't execute code on the host.
 - **Mistakes in `allow_internet`.** Setting `[network].allow_internet = true` or using NAT or bridged networks deliberately exposes live infrastructure to the sample.
 - **Shared resources.** Don't add shared folders, clipboard sharing, USB passthrough or port forwards to analysis VMs. YEMU doesn't configure any, but manual changes in virt-manager could add them.
 

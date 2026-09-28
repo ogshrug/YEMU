@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -86,6 +87,13 @@ class MainWindow(QMainWindow):
             item.setSizeHint(QSize(0, 40))
             self.nav.addItem(item)
         sl.addWidget(self.nav, 1)
+        self.update_btn = QPushButton()
+        self.update_btn.setObjectName("Primary")
+        self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_btn.hide()
+        self.update_btn.clicked.connect(self._show_update)
+        sl.addWidget(self.update_btn)
+        self._release = None
         self.footer = QLabel()
         self.footer.setObjectName("SidebarFooter")
         self.footer.setWordWrap(True)
@@ -114,6 +122,8 @@ class MainWindow(QMainWindow):
         self.backend_status = QLabel()
         self.statusBar().addPermanentWidget(self.backend_status)
         ctx.backend_changed.connect(self._update_status)
+        ctx.update_available.connect(self._on_update_available)
+        ctx.rules_updated.connect(self._on_rules_updated)
         ctx.config_changed.connect(self._apply_theme)
         ctx.log.message.connect(self._on_log)
 
@@ -144,6 +154,25 @@ class MainWindow(QMainWindow):
 
     def _report_back(self):
         self.show_page(self._report_origin)
+
+    def _on_update_available(self, release):
+        self._release = release
+        self.update_btn.setText(f"Update to {release['version']}")
+        self.update_btn.show()
+
+    def _show_update(self):
+        from yemu.gui.update_dialog import UpdateDialog
+
+        if self._release:
+            UpdateDialog(self.ctx, self._release, self).exec()
+
+    def _on_rules_updated(self, manifest):
+        self.statusBar().showMessage(
+            f"YARA rules updated: {manifest.get('set_name')} {manifest.get('commit')} "
+            f"({manifest.get('file_count', 0)} rule files)",
+            8000,
+        )
+        self.pages["rules"].refresh()
 
     def _update_status(self):
         label = self.ctx.backend_label()

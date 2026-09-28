@@ -97,8 +97,38 @@ def test_vms_rules_and_settings_pages(gui):
     settings = win.pages["settings"]
     settings.exec_wait.setValue(7)
     settings.theme.setCurrentText("dark")
+    assert not settings.repo.isEnabled()  # repo fields only apply to a custom GitHub source
+    settings.rule_source.setCurrentIndex(settings.rule_source.findData("forge:extended"))
+    settings.rules_interval.setValue(3)
+    settings.app_check.setChecked(False)
     settings.save()
     saved = yemu_config.load()
     assert saved["analysis"]["execution_wait"] == 7
     assert saved["ui"]["theme"] == "dark"
+    assert (saved["rules"]["source"], saved["rules"]["package"]) == ("yara-forge", "extended")
+    assert saved["rules"]["update_interval_days"] == 3
+    assert saved["updates"]["check_on_startup"] is False
     assert ctx.backend.name == "mock"
+
+
+def test_update_badge_and_dialog(gui):
+    app, ctx, win = gui
+    release = {
+        "version": "9.9.9",
+        "tag": "v9.9.9",
+        "name": "YEMU v9.9.9",
+        "url": "https://example.invalid/r",
+        "notes": "<b>not html</b>",
+        "published": "2026-10-01T00:00:00Z",
+        "assets": {"yemu-9.9.9-py3-none-any.whl": "https://example.invalid/yemu.whl"},
+    }
+    ctx.update_available.emit(release)
+    app.processEvents()
+    assert not win.update_btn.isHidden() and "9.9.9" in win.update_btn.text()
+
+    from yemu.gui.update_dialog import UpdateDialog
+
+    dlg = UpdateDialog(ctx, release, win)
+    assert dlg.hint.text().startswith("pip install --upgrade")  # tests run from source, not a frozen build
+    assert not dlg.primary.isHidden() and dlg.primary.text() == "Copy command"
+    dlg.deleteLater()

@@ -216,28 +216,106 @@ def cmd_vm_delete(args, cfg):
     return 0
 
 
-def cmd_sync_rules(args, cfg):
-    from yemu.core.yara_sync import RuleSyncError, YaraRuleSync
+def _rules_overrides(args):
+    overrides = {"ref": getattr(args, "ref", None)}
+    if getattr(args, "repo", None):
+        overrides.update(source="github-repo", repo_url=args.repo)
+    if getattr(args, "branch", None):
+        overrides["branch"] = args.branch
+    if getattr(args, "package", None):
+        overrides.update(source="yara-forge", package=args.package)
+    return overrides
+
+
+def _sync_rules(cfg, overrides):
+    from yemu.core.yara_sync import YaraRuleSync
 
     def progress(current, total, filename):
         print(f"\r[{current}/{total}] {filename[:60]:<60}", end="", file=sys.stderr, flush=True)
 
+    sync = YaraRuleSync.from_config(cfg["rules"], **overrides)
+    manifest = sync.sync(progress_callback=progress)
+    print(file=sys.stderr)
+    replaced = manifest.get("replaced_sets") or []
+    print(
+        f"Synced {sync.set_name} @ {manifest['commit']}: {manifest['file_count']} rule file(s), "
+        f"{len(manifest['skipped_files'])} skipped -> {sync.target_dir}"
+    )
+    if replaced:
+        print(f"Removed older synced sets: {', '.join(replaced)}")
+    return manifest
+
+
+def cmd_sync_rules(args, cfg):
+    from yemu.core.yara_sync import RuleSyncError
+
     try:
-        sync = YaraRuleSync(
-            repo_url=args.repo or cfg["rules"]["repo_url"],
-            branch=args.branch or cfg["rules"]["branch"],
-            ref=args.ref if args.ref is not None else cfg["rules"]["ref"],
-            max_download_mb=cfg["rules"]["max_download_mb"],
-        )
-        manifest = sync.sync(progress_callback=progress)
+        _sync_rules(cfg, _rules_overrides(args))
     except (RuleSyncError, OSError) as e:
         print(f"\nRule sync failed: {e}", file=sys.stderr)
         return 1
-    print(file=sys.stderr)
-    print(f"Synced into {paths.synced_rules_dir()}")
-    if isinstance(manifest, dict):
-        print(json.dumps({k: v for k, v in manifest.items() if not isinstance(v, (list, dict))}, indent=2))
     return 0
+
+
+def cmd_update(args, cfg):
+    from yemu.core import updates
+    from yemu.core.yara_sync import RuleSyncError, last_sync
+
+    what = args.what
+    rc = 0
+    if what in ("check", "rules"):
+        manifest = last_sync()
+        current = (
+            f"{manifest['set_name']} @ {manifest['commit']} (synced {manifest['timestamp'][:10]})"
+            if manifest
+            else "none"
+        )
+        print(f"YARA rules: {current}")
+        due = updates.rules_update_due(cfg)
+        if what == "rules" and (due or args.force):
+            try:
+                _sync_rules(cfg, {})
+            except (RuleSyncError, OSError) as e:
+                print(f"Rule update failed: {e}", file=sys.stderr)
+                rc = 1
+        elif what == "rules":
+            print(
+                f"Rules are up to date (next update after {cfg['rules']['update_interval_days']} days; "
+                "--force to sync now)"
+            )
+        elif due:
+            print("  -> a rule update is due: run `yemu update rules`")
+
+    if what in ("check", "app"):
+        try:
+            release = updates.check_for_app_update(cfg["updates"]["include_prereleases"])
+        except updates.UpdateError as e:
+            print(f"App update check failed: {e}", file=sys.stderr)
+            return 1
+        if not release:
+            print(f"YEMU {__version__} is the latest version.")
+            return rc
+        print(f"YEMU {release['version']} is available (you have {__version__}): {release['url']}")
+        if what == "check":
+            print("  -> run `yemu update app` to download it")
+            return rc
+        kind = updates.install_kind()
+        asset = updates.pick_asset(release, kind)
+        if not asset or kind in ("pip", "bundle-linux"):
+            print(updates.manual_update_hint(release, kind))
+            return rc
+        path = updates.download_update(
+            release,
+            asset,
+            progress=lambda d, t: print(
+                f"\r  {d / 1048576:.1f} / {t / 1048576:.1f} MB", end="", file=sys.stderr, flush=True
+            ),
+        )
+        print(f"\nDownloaded and verified: {path}")
+        if kind == "installer":
+            updates.launch_installer(path)
+            print("The installer is starting; close YEMU if it is open.")
+    return rc
 
 
 def cmd_paths(args, cfg):
@@ -409,11 +487,23 @@ def build_parser():
     p.add_argument("--backend", choices=BACKENDS)
     p.set_defaults(func=cmd_vm_delete)
 
-    p = sub.add_parser("sync-rules", help="download YARA rules from GitHub")
-    p.add_argument("--repo")
+    p = sub.add_parser("sync-rules", help="download YARA rules now (default source: YARA Forge core)")
+    p.add_argument("--package", choices=("core", "extended", "full"), help="use this YARA Forge package")
+    p.add_argument("--repo", help="sync a GitHub repository instead (github.com/<owner>/<repo>)")
     p.add_argument("--branch")
-    p.add_argument("--ref", help="pin a commit SHA or tag (overrides [rules].ref)")
+    p.add_argument("--ref", help="pin a release tag / commit (overrides [rules].ref)")
     p.set_defaults(func=cmd_sync_rules)
+
+    p = sub.add_parser("update", help="check for / install YEMU and YARA rule updates")
+    p.add_argument(
+        "what",
+        nargs="?",
+        choices=("check", "rules", "app"),
+        default="check",
+        help="check (default): report both; rules: sync if due; app: download the new release",
+    )
+    p.add_argument("--force", action="store_true", help="with `rules`: sync even if not due")
+    p.set_defaults(func=cmd_update)
 
     sub.add_parser("paths", help="show where YEMU stores data").set_defaults(func=cmd_paths)
 

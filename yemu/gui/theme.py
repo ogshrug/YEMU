@@ -155,6 +155,7 @@ def stylesheet(c):
         background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 7px; padding: 6px 8px;
         selection-background-color: {c['accent']}; selection-color: #ffffff; }}
     QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border-color: {c['accent']}; }}
+    QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color: {c['muted']}; background: {c['surface_alt']}; }}
     QComboBox::drop-down {{ border: none; width: 22px; }}
     QComboBox QAbstractItemView {{ background: {c['surface']}; border: 1px solid {c['border']}; selection-background-color: {c['accent_soft']}; selection-color: {c['text']}; }}
     QPlainTextEdit#Code, QPlainTextEdit#Log, QTextEdit#Code {{ background: {c['code_bg']}; font-family: "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", Consolas, monospace; font-size: 12px; }}

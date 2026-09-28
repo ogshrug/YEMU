@@ -21,10 +21,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from yemu import __version__, paths
 from yemu import config as yemu_config
-from yemu import paths
 from yemu.core.vm_backend import BACKENDS
 from yemu.gui.widgets import button, card, label, page_header, show_status
+
+RULE_SOURCES = [
+    ("YARA Forge core (recommended)", "forge:core"),
+    ("YARA Forge extended", "forge:extended"),
+    ("YARA Forge full (most false positives)", "forge:full"),
+    ("Custom GitHub repository", "repo"),
+]
 
 
 def _spin(lo, hi, suffix=""):
@@ -131,18 +138,56 @@ class SettingsPage(QWidget):
         grid.addWidget(n_card, 1, 0)
 
         u_card, ul = card()
-        ul.addWidget(label("Appearance and rules", "SectionTitle"))
+        ul.addWidget(label("Appearance", "SectionTitle"))
         f = QFormLayout()
         self.theme = QComboBox()
         self.theme.addItems(["system", "light", "dark"])
-        self.repo = QLineEdit()
-        self.branch = QLineEdit()
         f.addRow("Theme", self.theme)
-        f.addRow("Rules repository", self.repo)
-        f.addRow("Rules branch", self.branch)
         ul.addLayout(f)
         ul.addStretch(1)
         grid.addWidget(u_card, 1, 1)
+
+        # Updates
+        up_card, upl = card()
+        upl.addWidget(label("Updates", "SectionTitle"))
+        cols = QHBoxLayout()
+        left = QFormLayout()
+        self.rule_source = QComboBox()
+        for text, value in RULE_SOURCES:
+            self.rule_source.addItem(text, value)
+        self.rule_source.currentIndexChanged.connect(self._source_changed)
+        self.repo = QLineEdit()
+        self.repo.setPlaceholderText("https://github.com/<owner>/<repo>")
+        self.branch = QLineEdit()
+        self.rules_auto = QCheckBox("Keep YARA rules up to date automatically")
+        self.rules_interval = _spin(1, 90, " days")
+        left.addRow("YARA rule source", self.rule_source)
+        left.addRow("Repository", self.repo)
+        left.addRow("Branch", self.branch)
+        left.addRow("", self.rules_auto)
+        left.addRow("Update rules every", self.rules_interval)
+        right = QVBoxLayout()
+        self.app_check = QCheckBox("Check for new YEMU versions when the app starts")
+        self.prerelease = QCheckBox("Include pre-releases")
+        check_now = button("Check for updates now", "refresh")
+        check_now.clicked.connect(self._check_now)
+        right.addWidget(self.app_check)
+        right.addWidget(self.prerelease)
+        right.addWidget(
+            label(
+                "Updates are only downloaded when you confirm, and every download is verified against "
+                "the release's SHA-256 checksums. Checks contact api.github.com only.",
+                "Muted",
+                wrap=True,
+            )
+        )
+        right.addWidget(check_now)
+        right.addStretch(1)
+        cols.addLayout(left, 1)
+        cols.addSpacing(24)
+        cols.addLayout(right, 1)
+        upl.addLayout(cols)
+        grid.addWidget(up_card, 2, 0, 1, 2)
 
         actions = QHBoxLayout()
         actions.addStretch(1)
@@ -207,8 +252,35 @@ class SettingsPage(QWidget):
         self.allow_internet.setChecked(bool(c["network"]["allow_internet"]))
         self.allow_internet.blockSignals(False)
         self.theme.setCurrentText(c["ui"]["theme"])
-        self.repo.setText(c["rules"]["repo_url"])
-        self.branch.setText(c["rules"]["branch"])
+        r = c["rules"]
+        value = f"forge:{r['package']}" if r["source"] == "yara-forge" else "repo"
+        self.rule_source.setCurrentIndex(max(0, self.rule_source.findData(value)))
+        self.repo.setText(r["repo_url"])
+        self.branch.setText(r["branch"])
+        self.rules_auto.setChecked(bool(r["auto_update"]))
+        self.rules_interval.setValue(int(r["update_interval_days"]))
+        self.app_check.setChecked(bool(c["updates"]["check_on_startup"]))
+        self.prerelease.setChecked(bool(c["updates"]["include_prereleases"]))
+        self._source_changed()
+
+    def _source_changed(self):
+        custom = self.rule_source.currentData() == "repo"
+        self.repo.setEnabled(custom)
+        self.branch.setEnabled(custom)
+
+    def _check_now(self):
+        def done(release, error):
+            if error:
+                QMessageBox.warning(self, "YEMU", f"Could not check for updates: {error}")
+            elif not release:
+                QMessageBox.information(self, "YEMU", f"YEMU {__version__} is the latest version.")
+
+        self.ctx.check_app_update(silent=False, on_done=done)
+        if self.ctx.config["rules"]["auto_update"]:
+            from yemu.core import updates
+
+            if updates.rules_update_due(self.ctx.config):
+                self.ctx.sync_rules()
 
     def _browse_qemu(self):
         d = QFileDialog.getExistingDirectory(self, "Folder containing qemu-system-x86_64")
@@ -251,7 +323,17 @@ class SettingsPage(QWidget):
             name=self.net_name.text().strip() or "malware-analysis", allow_internet=self.allow_internet.isChecked()
         )
         c["ui"]["theme"] = self.theme.currentText()
-        c["rules"].update(repo_url=self.repo.text().strip(), branch=self.branch.text().strip() or "master")
+        source = self.rule_source.currentData()
+        if source == "repo":
+            c["rules"].update(
+                source="github-repo", repo_url=self.repo.text().strip(), branch=self.branch.text().strip() or "master"
+            )
+        else:
+            c["rules"].update(source="yara-forge", package=source.split(":", 1)[1])
+        c["rules"].update(auto_update=self.rules_auto.isChecked(), update_interval_days=self.rules_interval.value())
+        c["updates"].update(
+            check_on_startup=self.app_check.isChecked(), include_prereleases=self.prerelease.isChecked()
+        )
         path = yemu_config.save(c)
         self.ctx.reload_config()
         show_status(self, f"Settings saved to {path}. Backend: {self.ctx.backend_label()}", 6000)
