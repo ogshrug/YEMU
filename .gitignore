@@ -24,3 +24,4 @@ yemu.db
 .build-venv/
 build/
 dist/
+.idea/
