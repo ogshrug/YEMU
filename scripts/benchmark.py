@@ -214,7 +214,7 @@ def bench_report(aid):
         start = time.perf_counter()
         report.tabs.setCurrentIndex(raw_tab)
         longest = time.perf_counter() - start
-        longest = max(longest, pump_until(app, lambda: bool(report.raw_view.toPlainText())))
+        longest = max(longest, pump_until(app, lambda: report.raw_view.toPlainText().startswith("{")))
         print(f"raw-json-tab: {longest:.2f}s")
     finally:
         ctx.shutdown()
