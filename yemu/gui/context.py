@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, Signal
 from yemu import config as yemu_config
 from yemu.core.async_runner import AsyncRunner
 from yemu.core.vm_backend import create_backend
-from yemu.storage.db import Database
+from yemu.storage.db import Database, stale_run_cutoff
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,13 @@ class AppContext(QObject):
             if on_ready:
                 on_ready()
 
-        self.bridge.call(self.db.connect(), ready, lambda e: self.log(f"Database connection failed: {e}", "CRITICAL"))
+        async def open_db():
+            await self.db.connect()
+            stale = await self.db.mark_interrupted(stale_run_cutoff(self.config["analysis"]["timeout"]))
+            if stale:
+                logger.info(f"Marked {stale} analysis run(s) left running by an earlier YEMU as interrupted")
+
+        self.bridge.call(open_db(), ready, lambda e: self.log(f"Database connection failed: {e}", "CRITICAL"))
 
     def reload_config(self):
         self.config = yemu_config.load()
@@ -160,6 +166,6 @@ class AppContext(QObject):
     def shutdown(self):
         try:
             self.runner.run(self.db.close(), timeout=5)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not close the database cleanly: {e}")
         self.runner.stop()

@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 from yemu import config as yemu_config
 from yemu import paths
 
@@ -49,4 +51,32 @@ def test_dumps_and_load_round_trip_two_sources():
 def test_template_uses_rule_sources():
     path, written = yemu_config.write_template()
     assert written and "[[rules.sources]]" in path.read_text(encoding="utf-8")
+    assert yemu_config.load() == yemu_config.DEFAULTS
+
+
+@pytest.mark.parametrize(
+    "text,message",
+    [
+        ("[analysis\ntimeout = 900\n", "Cannot read"),
+        ('[analysis]\ntimeout = "900"\n', "[analysis].timeout must be a whole number, got '900'"),
+        ("[analysis]\ntimeout = true\n", "[analysis].timeout must be a whole number, got True"),
+        ("[network]\nallow_internet = 1\n", "[network].allow_internet must be true or false, got 1"),
+        ('[qemu]\nextra_args = "-m 4096"\n', "[qemu].extra_args must be a list"),
+        ('[vm]\nbackend = "qemuu"\n', "[vm].backend = 'qemuu' is not one of auto, libvirt, qemu, mock"),
+        ('[qemu]\naccel = "hyperv"\n', "[qemu].accel = 'hyperv' is not one of"),
+        ("[ui]\ntheme = 5\n", "[ui].theme must be a string, got 5"),
+        ('[ui]\ntheme = "blue"\n', "[ui].theme = 'blue' is not one of system, light, dark"),
+        ('ui = "dark"\n', "[ui] must be a table"),
+        ('[[rules.sources]]\nsource = "svn"\n', "[[rules.sources]] entry 1 must be a table with source"),
+    ],
+)
+def test_bad_config_raises_config_error(text, message):
+    path = _write(text)
+    with pytest.raises(yemu_config.ConfigError) as e:
+        yemu_config.load()
+    assert message in str(e.value) and str(path) in str(e.value)
+
+
+def test_missing_config_means_defaults():
+    assert not paths.config_file().exists()
     assert yemu_config.load() == yemu_config.DEFAULTS

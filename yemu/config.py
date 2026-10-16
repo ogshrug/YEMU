@@ -1,11 +1,13 @@
 """
 User settings loaded from paths.config_file() (config.toml). Every key is optional;
-missing keys fall back to DEFAULTS. `yemu config --init` writes a commented template.
+missing keys fall back to DEFAULTS. A file that can't be parsed, or a value with the wrong
+type or an unknown choice, raises ConfigError. `yemu config --init` writes a commented template.
 """
 
 import copy
 import json
 import logging
+from typing import Any
 
 try:
     import tomllib
@@ -16,10 +18,16 @@ except ImportError:  # Python < 3.11
         tomllib = None  # type: ignore[assignment]
 
 from yemu import paths
+from yemu.core.vm_backend import BACKENDS
 
 logger = logging.getLogger(__name__)
 
-DEFAULTS = {
+
+class ConfigError(ValueError):
+    """config.toml can't be read, or a value has the wrong type or an unknown choice."""
+
+
+DEFAULTS: dict[str, dict[str, Any]] = {
     "vm": {
         "backend": "auto",  # auto | libvirt | qemu | mock
         "default_vm": "ubuntu-clean",
@@ -158,6 +166,40 @@ def _convert_legacy_rules(data):
     logger.info(f"Converted the single [rules] source to [[rules.sources]]: {entry}")
 
 
+CHOICES = {
+    ("vm", "backend"): BACKENDS,
+    ("qemu", "accel"): ("auto", "whpx", "kvm", "hvf", "tcg"),
+    ("ui", "theme"): ("system", "light", "dark"),
+}
+TYPE_NAMES = {bool: "true or false", int: "a whole number", str: "a string", list: "a list"}
+
+
+def _same_type(value, default):
+    if isinstance(default, bool) or isinstance(value, bool):
+        return isinstance(value, bool) and isinstance(default, bool)  # TOML true is not 1, and 1 is not true
+    return isinstance(value, type(default))
+
+
+def _validate(cfg, path):
+    from yemu.core.yara_sync import SOURCES
+
+    for section, defaults in DEFAULTS.items():
+        if not isinstance(cfg[section], dict):
+            raise ConfigError(f"{path}: [{section}] must be a table, got {cfg[section]!r}")
+        for key, default in defaults.items():
+            value = cfg[section][key]
+            if not _same_type(value, default):
+                raise ConfigError(f"{path}: [{section}].{key} must be {TYPE_NAMES[type(default)]}, got {value!r}")
+    for (section, key), choices in CHOICES.items():
+        if cfg[section][key] not in choices:
+            raise ConfigError(f"{path}: [{section}].{key} = {cfg[section][key]!r} is not one of {', '.join(choices)}")
+    for n, entry in enumerate(cfg["rules"]["sources"], 1):
+        if not isinstance(entry, dict) or entry.get("source") not in SOURCES:
+            raise ConfigError(
+                f"{path}: [[rules.sources]] entry {n} must be a table with source = {' or '.join(SOURCES)}"
+            )
+
+
 def _merge(base, override):
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(base.get(key), dict):
@@ -180,11 +222,11 @@ def load(path=None):
     try:
         with open(path, "rb") as f:
             data = tomllib.load(f)
-        _convert_legacy_rules(data)
-        return _merge(cfg, data)
-    except (OSError, ValueError) as e:
-        logger.error(f"Failed to read config {path}: {e}. Using defaults.")
-        return cfg
+    except (OSError, ValueError) as e:  # TOMLDecodeError is a ValueError
+        raise ConfigError(f"Cannot read {path}: {e}") from e
+    _convert_legacy_rules(data)
+    _validate(_merge(cfg, data), path)
+    return cfg
 
 
 def write_template(path=None, overwrite=False):

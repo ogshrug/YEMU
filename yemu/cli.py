@@ -11,6 +11,7 @@ Headless entry point; works on Linux and Windows.
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -23,6 +24,8 @@ from yemu import config as yemu_config
 from yemu.core.vm_backend import BACKENDS, create_backend
 
 SEVERITY_PREFIX = {"INFO": "[*]", "WARN": "[!]", "CRITICAL": "[X]"}
+
+logger = logging.getLogger(__name__)
 
 
 def _printer(quiet=False):
@@ -38,12 +41,15 @@ def _json_default(value):
     return str(value)
 
 
-async def _with_db(fn):
-    from yemu.storage.db import Database
+async def _with_db(fn, cfg):
+    from yemu.storage.db import Database, stale_run_cutoff
 
     db = Database()
     await db.connect()
     try:
+        stale = await db.mark_interrupted(stale_run_cutoff(cfg["analysis"]["timeout"]))
+        if stale:
+            logger.info(f"Marked {stale} analysis run(s) left running by an earlier YEMU as interrupted")
         return await fn(db)
     finally:
         await db.close()
@@ -75,7 +81,7 @@ def cmd_analyze(args, cfg):
         )
         return analysis_id, await db.get_analysis_details(analysis_id) if analysis_id else None
 
-    analysis_id, details = asyncio.run(_with_db(run))
+    analysis_id, details = asyncio.run(_with_db(run, cfg))
     if not details:
         print("Analysis failed to start; see messages above.", file=sys.stderr)
         return 1
@@ -95,7 +101,7 @@ def cmd_analyze(args, cfg):
 
 
 def cmd_reports(args, cfg):
-    rows = asyncio.run(_with_db(lambda db: db.get_recent_analyses(limit=args.limit)))
+    rows = asyncio.run(_with_db(lambda db: db.get_recent_analyses(limit=args.limit), cfg))
     if args.json:
         print(json.dumps(rows, indent=2, default=_json_default))
         return 0
@@ -117,7 +123,7 @@ def cmd_report(args, cfg):
         events = await db.get_analysis_events(args.id) if details else []
         return details, events
 
-    details, events = asyncio.run(_with_db(fetch))
+    details, events = asyncio.run(_with_db(fetch, cfg))
     if not details:
         print(f"Analysis #{args.id} not found.", file=sys.stderr)
         return 1
@@ -537,19 +543,41 @@ def build_parser():
     return parser
 
 
+def _needs_config(args):
+    # `paths` and `config --init` must work with a broken config.toml so the user can find and reset it;
+    # the desktop app reports config errors in its own dialog
+    return not (args.func in (cmd_paths, cmd_gui) or (args.func is cmd_config and args.init))
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    from yemu.logging_setup import setup_logging
+    from yemu.logging_setup import FILE_ONLY, setup_logging
 
-    setup_logging(
+    log_file = setup_logging(
         console_level=logging.DEBUG if args.verbose else logging.WARNING,
         file_level=logging.DEBUG if args.verbose else logging.INFO,
     )
     if not getattr(args, "func", None):
         parser.print_help()
         return 0
-    return args.func(args, yemu_config.load())
+    try:
+        cfg = yemu_config.load()
+    except yemu_config.ConfigError as e:
+        if _needs_config(args):
+            logger.error(f"Config error: {e}", extra=FILE_ONLY)
+            print(f"Config error: {e}", file=sys.stderr)
+            return 2
+        cfg = copy.deepcopy(yemu_config.DEFAULTS)
+    try:
+        return args.func(args, cfg)
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
+    except Exception as e:
+        logger.exception(f"yemu {args.command} failed", extra={} if args.verbose else FILE_ONLY)
+        print(f"Error: {type(e).__name__}: {e} (details in {log_file})", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

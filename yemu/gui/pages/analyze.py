@@ -196,18 +196,44 @@ class AnalyzePage(QWidget):
             self.set_sample(path)
 
     def set_sample(self, path):
-        if not os.path.isfile(path):
+        # a rejected sample clears sample_path, which keeps Start disabled; the card says why
+        self.sample_path = None
+        self.file_card.show()
+        self.file_name.setText(os.path.basename(path) or path)
+        try:
+            if os.path.exists(path) and not os.path.isfile(path):
+                raise OSError("not a regular file (choose a file, not a folder)")
+            size = os.path.getsize(path)
+        except OSError as e:
+            self.file_meta.setText(f"Cannot use {path}: {e.strerror or e}")
+            self._update_start()
+            return
+        limit = self.ctx.config["analysis"]["max_sample_mb"]
+        if size > limit * 1024 * 1024:
+            self.file_meta.setText(
+                f"{human_size(size)} is over the {limit} MB sample limit (Largest sample in Settings)"
+            )
+            self._update_start()
             return
         self.sample_path = path
-        self.file_card.show()
-        self.file_name.setText(os.path.basename(path))
-        self.file_meta.setText(f"{human_size(os.path.getsize(path))}  ·  sha256: computing...")
-        self.ctx.bridge.call_sync(sha256_of, path, on_result=lambda h: self._set_hash(path, h))
+        self.file_meta.setText(f"{human_size(size)}  ·  sha256: computing...")
+        self.ctx.bridge.call_sync(
+            sha256_of,
+            path,
+            on_result=lambda h: self._set_hash(path, size, h),
+            on_error=lambda e: self._hash_failed(path, size, e),
+        )
         self._update_start()
 
-    def _set_hash(self, path, digest):
+    def _set_hash(self, path, size, digest):
         if path == self.sample_path:
-            self.file_meta.setText(f"{human_size(os.path.getsize(path))}  ·  sha256: {digest}")
+            self.file_meta.setText(f"{human_size(size)}  ·  sha256: {digest}")
+
+    def _hash_failed(self, path, size, error):
+        if path == self.sample_path:
+            self.sample_path = None
+            self.file_meta.setText(f"{human_size(size)}  ·  sha256: unreadable ({error})")
+            self._update_start()
 
     # --- VMs ---
     def refresh_vms(self):
