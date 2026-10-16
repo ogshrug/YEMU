@@ -1,13 +1,18 @@
 import asyncio
 import json
+import threading
+import time
 
 import pytest
 import pytest_asyncio
 
 from yemu import config as yemu_config
 from yemu.core import heuristics
+from yemu.core.behaviour_monitor import BehaviourMonitor
+from yemu.core.network_capture import NetworkCapture
 from yemu.core.orchestrator import Orchestrator
 from yemu.core.vm_manager import MockVMManager
+from yemu.core.yara_engine import YaraEngine
 from yemu.storage.db import Database
 
 
@@ -86,6 +91,45 @@ async def test_timeout_marks_status_and_powers_off(db, tmp_path):
     )
     details = await db.get_analysis_details(aid)
     assert details["status"] == "timeout"
+    assert vm.stopped >= 1
+
+
+@pytest.mark.asyncio
+async def test_cpu_stages_run_off_the_event_loop(db, tmp_path, monkeypatch):
+    threads = {}
+
+    def record(owner, name):
+        original = getattr(owner, name)
+
+        def wrapper(*args, **kwargs):
+            threads.setdefault(name, set()).add(threading.get_ident())
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(owner, name, wrapper)
+
+    record(BehaviourMonitor, "parse_strace")
+    record(heuristics, "analyse")
+    record(NetworkCapture, "analyze_pcap")
+    record(YaraEngine, "__init__")
+    aid = await Orchestrator(db, vm_manager=RecordingMock(), config=_cfg()).run_analysis(
+        _sample(tmp_path), guest_os="mock-ubuntu", run_pcap=True
+    )
+    assert (await db.get_analysis_details(aid))["status"] == "completed"
+    assert set(threads) == {"parse_strace", "analyse", "analyze_pcap", "__init__"}
+    loop_thread = threading.get_ident()
+    assert not any(loop_thread in idents for idents in threads.values()), threads
+
+
+@pytest.mark.asyncio
+async def test_timeout_fires_while_strace_parsing_is_busy(db, tmp_path, monkeypatch):
+    monkeypatch.setattr(BehaviourMonitor, "parse_strace", lambda self, lines, pid=None: time.sleep(3) or [])
+    vm = RecordingMock(listing="strace.1234")  # one log, so the abandoned worker is busy for 3 s, not 6
+    start = time.monotonic()
+    aid = await Orchestrator(db, vm_manager=vm, config=_cfg(timeout=1)).run_analysis(
+        _sample(tmp_path), guest_os="mock-ubuntu"
+    )
+    assert time.monotonic() - start < 2.5
+    assert (await db.get_analysis_details(aid))["status"] == "timeout"
     assert vm.stopped >= 1
 
 

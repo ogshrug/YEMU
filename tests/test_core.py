@@ -45,6 +45,22 @@ def test_yara_engine():
     print("YaraEngine tests passed!")
 
 
+def test_pcap_iocs(tmp_path):
+    scapy_all = pytest.importorskip("scapy.all")
+    from yemu.core.network_capture import NetworkCapture
+
+    pcap = tmp_path / "c.pcap"
+    ip = scapy_all.IP(src="10.0.2.15", dst="203.0.113.7")
+    scapy_all.wrpcap(
+        str(pcap),
+        [
+            ip / scapy_all.TCP(dport=443) / scapy_all.Raw(b"x" * 100),
+            ip / scapy_all.UDP(dport=53) / scapy_all.DNS(rd=1, qd=scapy_all.DNSQR(qname="evil.example")),
+        ],
+    )
+    assert sorted(NetworkCapture().analyze_pcap(str(pcap))) == [("domain", "evil.example"), ("ip", "203.0.113.7")]
+
+
 import sys
 from unittest.mock import MagicMock
 

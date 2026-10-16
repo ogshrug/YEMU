@@ -20,6 +20,7 @@ ruff check yemu tests
 ruff format --check yemu tests
 mypy
 pytest -q            # GUI tests run off-screen; set QT_QPA_PLATFORM=offscreen if you have no display
+PYTHONPATH=. python scripts/benchmark.py [--rules DIR]   # timings for rule loading, a mock analysis and a large report
 ```
 
 ## Guidelines
