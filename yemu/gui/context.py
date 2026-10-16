@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, Signal
 from yemu import config as yemu_config
 from yemu.core.async_runner import AsyncRunner
 from yemu.core.vm_backend import create_backend
-from yemu.storage.db import Database
+from yemu.storage.db import Database, stale_run_cutoff
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class AppContext(QObject):
     analyses_changed = Signal()
     config_changed = Signal()
     update_available = Signal(object)  # release dict from core.updates
-    rules_updated = Signal(object)  # sync manifest
+    rules_updated = Signal(object)  # yara_sync.sync_sources() result
 
     def __init__(self, db_path=None):
         super().__init__()
@@ -84,7 +84,13 @@ class AppContext(QObject):
             if on_ready:
                 on_ready()
 
-        self.bridge.call(self.db.connect(), ready, lambda e: self.log(f"Database connection failed: {e}", "CRITICAL"))
+        async def open_db():
+            await self.db.connect()
+            stale = await self.db.mark_interrupted(stale_run_cutoff(self.config["analysis"]["timeout"]))
+            if stale:
+                logger.info(f"Marked {stale} analysis run(s) left running by an earlier YEMU as interrupted")
+
+        self.bridge.call(open_db(), ready, lambda e: self.log(f"Database connection failed: {e}", "CRITICAL"))
 
     def reload_config(self):
         self.config = yemu_config.load()
@@ -95,9 +101,13 @@ class AppContext(QObject):
     def run_background_updates(self):
         """Startup: re-sync YARA rules if due and look for a newer YEMU, both off the UI thread."""
         from yemu.core import updates
+        from yemu.core.yara_sync import RuleSyncError
 
-        if updates.rules_update_due(self.config):
-            self.sync_rules(automatic=True)
+        try:
+            if updates.rules_update_due(self.config):
+                self.sync_rules(automatic=True)
+        except RuleSyncError as e:
+            self.log(f"Automatic YARA rule update skipped: {e}", "WARN")
         if updates.app_check_due(self.config):
             self.check_app_update(silent=True)
 
@@ -108,11 +118,14 @@ class AppContext(QObject):
             return
         self.rules_syncing = True
 
-        def done(manifest):
+        def done(result):
             self.rules_syncing = False
-            self.rules_updated.emit(manifest)
+            if automatic:
+                for failure in result["failed"]:
+                    self.log(f"Automatic YARA rule update failed for {failure['set_name']}: {failure['error']}", "WARN")
+            self.rules_updated.emit(result)
             if on_done:
-                on_done(manifest)
+                on_done(result)
 
         def failed(error):
             self.rules_syncing = False
@@ -153,6 +166,6 @@ class AppContext(QObject):
     def shutdown(self):
         try:
             self.runner.run(self.db.close(), timeout=5)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not close the database cleanly: {e}")
         self.runner.stop()

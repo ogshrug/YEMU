@@ -6,6 +6,12 @@ import logging.handlers
 from yemu import paths
 
 FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
+# extra= for records the user has already been shown in a shorter form: they go to the file only
+FILE_ONLY = {"file_only": True}
+
+
+def log_file():
+    return paths.logs_dir() / "yemu.log"
 
 
 def setup_logging(console_level=logging.WARNING, file_level=logging.INFO):
@@ -20,17 +26,19 @@ def setup_logging(console_level=logging.WARNING, file_level=logging.INFO):
     console.setLevel(console_level)
     console.setFormatter(logging.Formatter("[%(levelname)s] %(name)s: %(message)s"))
     # analysis progress is already shown by the CLI/GUI; keep it in the file log only
-    console.addFilter(lambda record: not record.name.startswith("yemu.analysis"))
+    console.addFilter(
+        lambda record: not record.name.startswith("yemu.analysis") and not getattr(record, "file_only", False)
+    )
     console.set_name("yemu-console")
     root.addHandler(console)
 
-    log_file = paths.logs_dir() / "yemu.log"
+    path = log_file()
     try:
-        fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+        fh = logging.handlers.RotatingFileHandler(path, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
         fh.setLevel(file_level)
         fh.setFormatter(logging.Formatter(FORMAT))
         fh.set_name("yemu-file")
         root.addHandler(fh)
     except OSError as e:
-        logging.getLogger(__name__).warning(f"File logging disabled ({log_file}): {e}")
-    return log_file
+        logging.getLogger(__name__).warning(f"File logging disabled ({path}): {e}")
+    return path

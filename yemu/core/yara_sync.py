@@ -5,6 +5,9 @@ Two kinds of source:
   - a repository archive (any GitHub repo, e.g. Yara-Rules/rules), pinned to a commit
   - a release asset (e.g. YARA Forge's weekly yara-forge-rules-core.zip), pinned to a tag
 
+Every [[rules.sources]] entry syncs into its own set folder (sync_sources); a full sync
+removes managed sets (folders with a manifest) that are no longer configured.
+
 Hardening: the version is resolved (or a pinned `ref` is used) and recorded in the
 manifest; the download and every file are size-capped; archive paths are confined to
 the target folder (no zip-slip); each rule file must compile; and the new set replaces
@@ -12,6 +15,7 @@ the old one atomically, so a failed sync never leaves a half-updated set.
 """
 
 import datetime
+import functools
 import io
 import json
 import logging
@@ -45,6 +49,9 @@ MANIFEST = ".sync_manifest.json"
 YARA_FORGE_REPO = "https://github.com/YARAHQ/yara-forge"
 YARA_FORGE_PACKAGES = ("core", "extended", "full")
 SOURCES = ("yara-forge", "github-repo")
+
+
+logger = logging.getLogger(__name__)
 
 
 class RuleSyncError(RuntimeError):
@@ -265,9 +272,6 @@ class YaraRuleSync:
             shutil.rmtree(old, ignore_errors=True)
             if replace_other_sets:
                 manifest["replaced_sets"] = self._remove_other_managed_sets()
-            # one manifest at the top level too, for "last sync" displays and the auto-update schedule
-            with open(os.path.join(self.rules_dir, MANIFEST), "w", encoding="utf-8") as f:
-                json.dump(manifest, f, indent=4)
             self.logger.info(f"Sync complete at {version}: {synced} rule files, {len(skipped)} skipped.")
             return manifest
         except Exception:
@@ -275,10 +279,91 @@ class YaraRuleSync:
             raise
 
 
-def last_sync(rules_dir=None):
-    """The top-level manifest of the most recent successful sync, or None."""
-    path = Path(rules_dir or paths.synced_rules_dir()) / MANIFEST
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+def describe_source(entry):
+    """One-line name of a [[rules.sources]] entry, e.g. "YARA Forge core" or "github.com/owner/repo (main)"."""
+    if entry.get("source") == "github-repo":
+        text = f"{entry.get('repo_url', '').split('://', 1)[-1].rstrip('/')} ({entry.get('branch') or 'master'})"
+    else:
+        text = f"YARA Forge {entry.get('package')}"
+    return text + (f" @ {entry['ref']}" if entry.get("ref") else "")
+
+
+def syncs_from_config(rules_cfg, rules_dir=None):
+    """One sync per [[rules.sources]] entry; a bad entry is reported with its 1-based position."""
+    sources = rules_cfg["sources"]
+    if not sources:
+        raise RuleSyncError("No rule sources configured")
+    syncs: list[YaraRuleSync] = []
+    seen: dict[str, int] = {}
+    for n, entry in enumerate(sources, 1):
+        if entry.get("source") not in SOURCES:
+            raise RuleSyncError(
+                f"Rule source {n}: unknown source {entry.get('source')!r}; use one of {', '.join(SOURCES)}"
+            )
+        try:
+            sync = YaraRuleSync.from_config(
+                {**entry, "max_download_mb": rules_cfg["max_download_mb"]}, rules_dir=rules_dir
+            )
+        except RuleSyncError as e:
+            raise RuleSyncError(f"Rule source {n}: {e}") from e
+        if sync.set_name in seen:
+            raise RuleSyncError(f"Rule source {n}: same rule set as source {seen[sync.set_name]} ({sync.set_name})")
+        seen[sync.set_name] = n
+        syncs.append(sync)
+    return syncs
+
+
+def _remove_unconfigured_sets(rules_dir, keep):
+    """Drop synced sets that are no longer configured; hand-written rules (no manifest) are never touched."""
+    removed = []
+    for entry in sorted(Path(rules_dir).iterdir()):
+        if (
+            entry.is_dir()
+            and not entry.name.startswith(".")
+            and entry.name not in keep
+            and (entry / MANIFEST).is_file()
+        ):
+            shutil.rmtree(entry)
+            removed.append(entry.name)
+    if removed:
+        logger.info(f"Removed rule sets that are no longer configured: {', '.join(removed)}")
+    return removed
+
+
+def _prefixed_progress(progress_callback, set_name, current, total, name):
+    progress_callback(current, total, f"{set_name}: {name}")
+
+
+def sync_sources(rules_cfg, rules_dir=None, progress_callback=None):
+    """
+    Sync every configured source in turn. A failing source is recorded and keeps its previous
+    folder; the others still sync. Returns {"synced": [manifests], "failed": [...], "removed": [names]}.
+    """
+    syncs = syncs_from_config(rules_cfg, rules_dir)
+    result: dict[str, list] = {"synced": [], "failed": [], "removed": []}
+    for sync in syncs:
+        progress = None
+        if progress_callback:
+            progress = functools.partial(_prefixed_progress, progress_callback, sync.set_name)
+        try:
+            result["synced"].append(sync.sync(progress_callback=progress, replace_other_sets=False))
+        except Exception as e:  # recorded and reported by the caller; one bad source must not block the rest
+            logger.warning(f"Rule sync failed for {sync.set_name}: {e}")
+            result["failed"].append({"set_name": sync.set_name, "error": str(e)})
+    root = Path(syncs[0].rules_dir)
+    if root.is_dir():
+        result["removed"] = _remove_unconfigured_sets(root, {s.set_name for s in syncs})
+    return result
+
+
+def synced_sets(rules_dir=None):
+    """Manifest of every synced set, by set name."""
+    root = Path(rules_dir or paths.synced_rules_dir())
+    sets = {}
+    for entry in sorted(root.iterdir()) if root.is_dir() else []:
+        if entry.is_dir() and not entry.name.startswith("."):
+            try:
+                sets[entry.name] = json.loads((entry / MANIFEST).read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue  # not a synced set (e.g. custom/)
+    return sets

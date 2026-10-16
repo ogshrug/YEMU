@@ -1,8 +1,9 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 import pytest
 
-from yemu.storage.db import SCHEMA_VERSION, Database
+from yemu.storage.db import SCHEMA_VERSION, Database, stale_run_cutoff
 
 
 def _legacy_db(path):
@@ -64,5 +65,30 @@ async def test_bulk_events_and_status(tmp_path):
         assert (details["status"], details["error"], details["guest_os"]) == ("failed", "boom", "vm")
         events = await db.get_analysis_events(aid)
         assert [e["timestamp"] for e in events] == [1.0, 2.0]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_mark_interrupted_only_touches_old_running_rows(tmp_path):
+    db = Database(tmp_path / "stale.db")
+    await db.connect()
+    try:
+        sid = await db.add_sample("h", "m", "s.bin", "unknown", 3)
+        now = datetime.now()
+        old = await db.create_analysis(sid, now - timedelta(hours=2))
+        old_whole_second = await db.create_analysis(sid, (now - timedelta(hours=2)).replace(microsecond=0))
+        live = await db.create_analysis(sid, now - timedelta(minutes=1))
+        done = await db.create_analysis(sid, now - timedelta(hours=3))
+        await db.update_analysis(done, status="completed", finished_at=now - timedelta(hours=2))
+
+        assert await db.mark_interrupted(stale_run_cutoff(900)) == 2
+        rows = {aid: await db.get_analysis_details(aid) for aid in (old, old_whole_second, live, done)}
+        for aid in (old, old_whole_second):
+            assert rows[aid]["status"] == "interrupted" and rows[aid]["finished_at"]
+            assert rows[aid]["error"] == "YEMU stopped before this analysis finished"
+        assert rows[live]["status"] == "running" and rows[live]["finished_at"] is None
+        assert rows[done]["status"] == "completed" and rows[done]["error"] is None
+        assert await db.mark_interrupted(stale_run_cutoff(900)) == 0
     finally:
         await db.close()

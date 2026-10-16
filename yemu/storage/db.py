@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiosqlite
 
@@ -68,6 +68,11 @@ MIGRATIONS = [
 def _ts(value):
     # store timestamps as text ourselves: sqlite3's implicit datetime adapter is deprecated
     return str(value) if isinstance(value, datetime) else value
+
+
+def stale_run_cutoff(analysis_timeout):
+    """Runs started before this can't still be live: no analysis outlives its own [analysis].timeout."""
+    return datetime.now() - timedelta(seconds=analysis_timeout + 300)
 
 
 class Database:
@@ -142,6 +147,18 @@ class Database:
         except Exception as e:
             self.logger.error(f"Failed to create analysis: {e}")
             return None
+
+    async def mark_interrupted(self, started_before):
+        """Close runs left 'running' by a YEMU that was killed or closed mid-analysis. Returns the row count."""
+        assert self.conn is not None
+        # started_at is str(datetime) text (see _ts), which sorts in time order
+        async with self.conn.execute(
+            "UPDATE analyses SET status = 'interrupted', error = ?, finished_at = ? "
+            "WHERE status = 'running' AND started_at < ?",
+            ("YEMU stopped before this analysis finished", _ts(datetime.now()), _ts(started_before)),
+        ) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount
 
     async def update_analysis(
         self,

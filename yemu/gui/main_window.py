@@ -35,7 +35,7 @@ NAV = [
 
 def _nav_icon(name, colors):
     ic = QIcon()
-    for mode, color in ((QIcon.Mode.Normal, colors["sidebar_text"]), (QIcon.Mode.Selected, "#ffffff")):
+    for mode, color in ((QIcon.Mode.Normal, colors["sidebar_text"]), (QIcon.Mode.Selected, colors["accent"])):
         ic.addPixmap(theme.icon(name, color, 18).pixmap(QSize(18, 18)), mode)
     return ic
 
@@ -63,9 +63,9 @@ class MainWindow(QMainWindow):
         sl.setContentsMargins(12, 22, 12, 16)
         sl.setSpacing(4)
         brand = QHBoxLayout()
-        logo = QLabel()
-        logo.setPixmap(theme.icon("shield", "#7b73ff", 26).pixmap(QSize(26, 26)))
-        brand.addWidget(logo)
+        self.logo = QLabel()
+        self.logo.setPixmap(theme.icon("shield", self.colors["accent"], 26).pixmap(QSize(26, 26)))
+        brand.addWidget(self.logo)
         name = QVBoxLayout()
         name.setSpacing(0)
         title = QLabel("YEMU")
@@ -166,17 +166,17 @@ class MainWindow(QMainWindow):
         if self._release:
             UpdateDialog(self.ctx, self._release, self).exec()
 
-    def _on_rules_updated(self, manifest):
+    def _on_rules_updated(self, result):
+        failed = ", ".join(f["set_name"] for f in result["failed"])
         self.statusBar().showMessage(
-            f"YARA rules updated: {manifest.get('set_name')} {manifest.get('commit')} "
-            f"({manifest.get('file_count', 0)} rule files)",
+            f"YARA rules updated: {len(result['synced'])} set(s) synced" + (f"; failed: {failed}" if failed else ""),
             8000,
         )
         self.pages["rules"].refresh()
 
     def _update_status(self):
         label = self.ctx.backend_label()
-        dot = "#16a34a" if self.ctx.backend.name != "mock" else "#d97706"
+        dot = self.colors["ok"] if self.ctx.backend.name != "mock" else self.colors["warn"]
         self.backend_status.setText(f"<span style='color:{dot}'>●</span> Backend: {label}   ")
         self.footer.setText(f"v{__version__} · {label}")
 
@@ -184,6 +184,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
 
         self.colors = theme.apply(QApplication.instance(), self.ctx.config["ui"]["theme"])
+        self.logo.setPixmap(theme.icon("shield", self.colors["accent"], 26).pixmap(QSize(26, 26)))
         for i, (key, _) in enumerate(NAV):
             self.nav.item(i).setIcon(_nav_icon(key, self.colors))
 

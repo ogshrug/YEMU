@@ -4,45 +4,77 @@ from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
+# "Lab bench": warm paper and graphite neutrals with a petrol-teal accent. Teal stays clear of every
+# verdict colour, so an interactive element is never read as a verdict.
 LIGHT = {
-    "bg": "#f5f6f8",
-    "surface": "#ffffff",
-    "surface_alt": "#f0f2f5",
-    "border": "#e2e5ea",
-    "text": "#1b2230",
-    "muted": "#687385",
-    "accent": "#4f46e5",
+    "bg": "#f3f1ec",
+    "surface": "#fbfaf7",
+    "surface_alt": "#ebe8e1",
+    "border": "#d9d4ca",
+    "text": "#1d1c1a",
+    "muted": "#645f57",
+    "accent": "#0a6b6a",
+    "accent_hover": "#085756",
     "accent_text": "#ffffff",
-    "accent_soft": "#eceafd",
-    "sidebar": "#111827",
-    "sidebar_text": "#c9cfda",
-    "sidebar_active": "#1f2937",
-    "code_bg": "#fbfbfc",
+    "accent_soft": "#d6e9e6",
+    "sidebar": "#e9e5dd",
+    "sidebar_text": "#4a463f",
+    "sidebar_active": "#dcd7cc",
+    "code_bg": "#f8f6f1",
+    "ok": "#2b7a2f",
+    "warn": "#9a5800",
+    "danger": "#b3261e",
 }
 DARK = {
-    "bg": "#0e1015",
-    "surface": "#161a21",
-    "surface_alt": "#1c212a",
-    "border": "#262c37",
-    "text": "#e6e8ee",
-    "muted": "#98a2b3",
-    "accent": "#7b73ff",
-    "accent_text": "#ffffff",
-    "accent_soft": "#25234a",
-    "sidebar": "#0a0c10",
-    "sidebar_text": "#aeb6c4",
-    "sidebar_active": "#1a1f29",
-    "code_bg": "#12151b",
+    "bg": "#131210",
+    "surface": "#1b1a17",
+    "surface_alt": "#23211e",
+    "border": "#34312c",
+    "text": "#ece7de",
+    "muted": "#a29b8f",
+    "accent": "#3fbfb6",
+    "accent_hover": "#5fd0c7",
+    "accent_text": "#0c1a19",
+    "accent_soft": "#183230",
+    "sidebar": "#0e0d0c",
+    "sidebar_text": "#b3ac9f",
+    "sidebar_active": "#221f1c",
+    "code_bg": "#171614",
+    "ok": "#5cbf62",
+    "warn": "#e0a03a",
+    "danger": "#f06a5c",
 }
 
+# one radius scale for every rounded corner: controls and panels, and small marks (checkboxes, bars, badges)
+RADIUS = 4
+RADIUS_SM = 2
+
 VERDICT_COLORS = {
-    "clean": "#16a34a",
-    "suspicious": "#d97706",
-    "malicious": "#dc2626",
-    "manual": "#2563eb",
-    "unknown": "#6b7280",
+    "clean": "#2f9e44",
+    "suspicious": "#c27a10",
+    "malicious": "#d9412f",
+    "manual": "#4c6ef5",
+    "unknown": "#857f75",
 }
-SEVERITY_COLORS = {"INFO": None, "WARN": "#d97706", "CRITICAL": "#dc2626"}
+SEVERITY_COLORS = {"INFO": None, "WARN": VERDICT_COLORS["suspicious"], "CRITICAL": VERDICT_COLORS["malicious"]}
+
+# YARA editor highlighting, one per theme
+SYNTAX_LIGHT = {
+    "kw": "#0a6b6a",
+    "str": "#4f7a12",
+    "var": "#8a4a0c",
+    "num": "#a3341f",
+    "cmt": "#7a746a",
+    "hex": "#7a5c00",
+}
+SYNTAX_DARK = {
+    "kw": "#5fd0c7",
+    "str": "#b5cf6b",
+    "var": "#e0a060",
+    "num": "#f08a6e",
+    "cmt": "#8a847a",
+    "hex": "#e6c35c",
+}
 
 # Minimal 24px line icons (feather-style); "currentColor" is replaced at render time
 _ICONS = {
@@ -69,12 +101,7 @@ _ICONS = {
 }
 
 
-def icon(name, color="#8a94a6", size=20):
-    body = _ICONS.get(name, _ICONS["file"])
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" '
-        f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{body}</svg>'
-    )
+def _render(svg, size):
     renderer = QSvgRenderer(QByteArray(svg.encode()))
     ratio = 2
     pix = QPixmap(size * ratio, size * ratio)
@@ -84,6 +111,23 @@ def icon(name, color="#8a94a6", size=20):
     painter.end()
     pix.setDevicePixelRatio(ratio)
     return QIcon(pix)
+
+
+def _line_svg(body, color, width):
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" '
+        f'stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round">{body}</svg>'
+    )
+
+
+def icon(name, color, size=20):
+    return _render(_line_svg(_ICONS.get(name, _ICONS["file"]), color, 1.8), size)
+
+
+def rgba(hex_color, alpha):
+    """Stylesheet rgba() from a palette hex colour (Qt reads 8-digit hex as #AARRGGBB)."""
+    q = QColor(hex_color)
+    return f"rgba({q.red()},{q.green()},{q.blue()},{alpha})"
 
 
 def is_dark(preference="system"):
@@ -99,89 +143,119 @@ def colors(preference="system"):
     return DARK if is_dark(preference) else LIGHT
 
 
-def _check_image():
-    """Qt stylesheets need a file for indicator images; write a white checkmark once."""
+_active: dict | None = None
+
+
+def active():
+    """The palette last passed to apply(), for widgets that have no AppContext."""
+    if _active is None:
+        raise RuntimeError("theme.apply() has not been called yet")
+    return _active
+
+
+def _check_image(color):
+    """Qt stylesheets need a file for indicator images; write a checkmark per colour once."""
     from yemu import paths
 
-    path = paths.cache_dir() / "ui" / "check.svg"
+    path = paths.cache_dir() / "ui" / f"check-{color.lstrip('#')}.svg"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" '
-            'stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
-            encoding="utf-8",
-        )
+        path.write_text(_line_svg('<path d="M5 12l5 5L20 7"/>', color, 3), encoding="utf-8")
     return path.as_posix()
 
 
 def stylesheet(c):
-    check = _check_image()
+    check = _check_image(c["accent_text"])
+    r, rs = RADIUS, RADIUS_SM
+    badges = "\n".join(
+        f'    QLabel#Badge[verdict="{v}"] {{ color: {col}; background: {rgba(col, 0.12)}; '
+        f'border: 1px solid {rgba(col, 0.45)}; }}'
+        for v, col in VERDICT_COLORS.items()
+    )
     return f"""
     * {{ font-family: "Segoe UI", "Inter", "Cantarell", "Noto Sans", "Ubuntu", "Helvetica Neue", Arial, sans-serif; font-size: 13px; }}
     QMainWindow, QWidget#Page, QDialog {{ background: {c['bg']}; color: {c['text']}; }}
     QWidget {{ color: {c['text']}; }}
     QLabel#Muted, QLabel[muted="true"] {{ color: {c['muted']}; }}
-    QLabel#PageTitle {{ font-size: 22px; font-weight: 600; }}
+    QLabel#PageTitle {{ font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }}
     QLabel#PageSubtitle {{ color: {c['muted']}; font-size: 13px; }}
     QLabel#SectionTitle {{ font-size: 14px; font-weight: 600; }}
-    QLabel#StatValue {{ font-size: 24px; font-weight: 600; }}
-    QLabel#StatLabel {{ color: {c['muted']}; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }}
+    QLabel#StatValue {{ font-family: "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", Consolas, monospace;
+        font-size: 24px; font-weight: 600; }}
+    QLabel#StatLabel {{ color: {c['muted']}; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }}
 
-    QFrame#Card {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 10px; }}
-    QFrame#Banner {{ background: {c['accent_soft']}; border-radius: 8px; }}
-    QFrame#WarnBanner {{ background: rgba(217,119,6,0.12); border: 1px solid rgba(217,119,6,0.35); border-radius: 8px; }}
+    QFrame#Card {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r}px; }}
+    QFrame#Banner {{ background: {c['accent_soft']}; border-left: 3px solid {c['accent']}; border-radius: {r}px; }}
+    QFrame#WarnBanner {{ background: {rgba(c['warn'], 0.10)}; border: 1px solid {rgba(c['warn'], 0.40)};
+        border-left: 3px solid {c['warn']}; border-radius: {r}px; }}
+    QFrame#DropZone {{ border: 2px dashed {rgba(c['muted'], 0.45)}; border-radius: {r}px; background: transparent; }}
+    QFrame#DropZone[active="true"] {{ border-color: {c['accent']}; background: {rgba(c['accent'], 0.08)}; }}
+    QLabel#Badge {{ border-radius: {rs}px; padding: 3px 10px; font-weight: 700; font-size: 11px; letter-spacing: 1px; }}
+{badges}
 
-    QWidget#Sidebar {{ background: {c['sidebar']}; }}
-    QLabel#Brand {{ color: #ffffff; font-size: 18px; font-weight: 700; letter-spacing: 2px; }}
+    QWidget#Sidebar {{ background: {c['sidebar']}; border-right: 1px solid {c['border']}; }}
+    QLabel#Brand {{ color: {c['text']}; font-size: 18px; font-weight: 700; letter-spacing: 3px; }}
     QLabel#BrandSub {{ color: {c['sidebar_text']}; font-size: 11px; }}
     QListWidget#Nav {{ background: transparent; border: none; outline: none; }}
-    QListWidget#Nav::item {{ color: {c['sidebar_text']}; padding: 10px 12px; margin: 2px 8px; border-radius: 8px; }}
+    QListWidget#Nav::item {{ color: {c['sidebar_text']}; padding: 10px 12px 10px 9px; margin: 2px 4px;
+        border-left: 3px solid transparent; border-radius: {r}px; }}
     QListWidget#Nav::item:hover {{ background: {c['sidebar_active']}; }}
-    QListWidget#Nav::item:selected {{ background: {c['accent']}; color: #ffffff; }}
+    QListWidget#Nav::item:selected {{ background: {c['sidebar_active']}; color: {c['text']}; font-weight: 600;
+        border-left: 3px solid {c['accent']}; }}
     QLabel#SidebarFooter {{ color: {c['sidebar_text']}; font-size: 11px; }}
 
-    QPushButton {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 7px; padding: 7px 14px; }}
-    QPushButton:hover {{ border-color: {c['accent']}; }}
+    QPushButton {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r}px; padding: 7px 14px; }}
+    QPushButton:hover {{ border-color: {c['muted']}; }}
+    QPushButton:focus {{ border-color: {c['accent']}; }}
+    QPushButton:pressed {{ background: {c['surface_alt']}; }}
     QPushButton:disabled {{ color: {c['muted']}; background: {c['surface_alt']}; }}
-    QPushButton#Primary {{ background: {c['accent']}; color: {c['accent_text']}; border: none; font-weight: 600; }}
-    QPushButton#Primary:hover {{ background: {c['accent']}; }}
-    QPushButton#Primary:disabled {{ background: {c['border']}; color: {c['muted']}; }}
-    QPushButton#Danger {{ color: #dc2626; }}
-    QPushButton#Flat {{ background: transparent; border: none; padding: 4px 8px; }}
+    QPushButton#Primary {{ background: {c['accent']}; color: {c['accent_text']}; border: 1px solid {c['accent']}; font-weight: 600; }}
+    QPushButton#Primary:hover {{ background: {c['accent_hover']}; border-color: {c['accent_hover']}; }}
+    QPushButton#Primary:focus {{ border-color: {c['text']}; }}
+    QPushButton#Primary:disabled {{ background: {c['border']}; border-color: {c['border']}; color: {c['muted']}; }}
+    QPushButton#Danger {{ color: {c['danger']}; }}
+    QPushButton#Danger:hover, QPushButton#Danger:focus {{ border-color: {c['danger']}; }}
+    QPushButton#Flat {{ background: transparent; border: 1px solid transparent; padding: 4px 8px; }}
+    QPushButton#Flat:hover {{ color: {c['accent']}; }}
+    QPushButton#Flat:focus {{ border-color: {c['accent']}; }}
 
-    QSpinBox {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 7px; padding: 5px 4px 5px 8px; min-height: 20px; }}
+    QSpinBox {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r}px; padding: 5px 4px 5px 8px; min-height: 20px; }}
     QSpinBox:focus {{ border-color: {c['accent']}; }}
     QLineEdit, QComboBox, QPlainTextEdit, QTextEdit {{
-        background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 7px; padding: 6px 8px;
-        selection-background-color: {c['accent']}; selection-color: #ffffff; }}
-    QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border-color: {c['accent']}; }}
+        background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r}px; padding: 6px 8px;
+        selection-background-color: {c['accent']}; selection-color: {c['accent_text']}; }}
+    QLineEdit:hover, QComboBox:hover, QSpinBox:hover {{ border-color: {c['muted']}; }}
+    QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QTextEdit:focus {{ border-color: {c['accent']}; }}
     QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color: {c['muted']}; background: {c['surface_alt']}; }}
     QComboBox::drop-down {{ border: none; width: 22px; }}
     QComboBox QAbstractItemView {{ background: {c['surface']}; border: 1px solid {c['border']}; selection-background-color: {c['accent_soft']}; selection-color: {c['text']}; }}
     QPlainTextEdit#Code, QPlainTextEdit#Log, QTextEdit#Code {{ background: {c['code_bg']}; font-family: "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", Consolas, monospace; font-size: 12px; }}
 
     QCheckBox {{ spacing: 8px; }}
-    QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {c['muted']}; border-radius: 4px; background: {c['surface']}; }}
-    QCheckBox::indicator:hover {{ border-color: {c['accent']}; }}
+    QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {c['muted']}; border-radius: {rs}px; background: {c['surface']}; }}
+    QCheckBox::indicator:hover, QCheckBox::indicator:focus {{ border-color: {c['accent']}; }}
     QCheckBox::indicator:checked {{ background: {c['accent']}; border-color: {c['accent']}; image: url({check}); }}
-    QTableView, QTreeWidget, QListWidget#Plain {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: 8px;
+    QTableView, QTreeWidget, QListWidget#Plain {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r}px;
         gridline-color: {c['border']}; alternate-background-color: {c['surface_alt']};
         selection-background-color: {c['accent_soft']}; selection-color: {c['text']}; }}
+    QTableView:focus, QTreeWidget:focus, QListWidget#Plain:focus {{ border-color: {c['accent']}; }}
     QHeaderView::section {{ background: {c['surface_alt']}; color: {c['muted']}; border: none; border-bottom: 1px solid {c['border']};
-        padding: 6px 8px; font-weight: 600; font-size: 11px; }}
-    QTabWidget::pane {{ border: 1px solid {c['border']}; border-radius: 8px; background: {c['surface']}; top: -1px; }}
+        padding: 6px 8px; font-weight: 600; font-size: 11px; text-transform: uppercase; }}
+    QTabWidget::pane {{ border: 1px solid {c['border']}; border-radius: {r}px; background: {c['surface']}; top: -1px; }}
     QTabBar::tab {{ background: transparent; color: {c['muted']}; padding: 8px 14px; border: none; border-bottom: 2px solid transparent; }}
+    QTabBar::tab:hover {{ color: {c['text']}; }}
     QTabBar::tab:selected {{ color: {c['text']}; border-bottom: 2px solid {c['accent']}; }}
-    QProgressBar {{ background: {c['surface_alt']}; border: none; border-radius: 4px; height: 8px; text-align: center; color: transparent; }}
-    QProgressBar::chunk {{ background: {c['accent']}; border-radius: 4px; }}
+    QProgressBar {{ background: {c['surface_alt']}; border: none; border-radius: {rs}px; height: 8px; text-align: center; color: transparent; }}
+    QProgressBar::chunk {{ background: {c['accent']}; border-radius: {rs}px; }}
     QStatusBar {{ background: {c['surface']}; border-top: 1px solid {c['border']}; color: {c['muted']}; }}
     QScrollArea {{ border: none; background: transparent; }}
     QSplitter::handle {{ background: {c['border']}; }}
-    QToolTip {{ background: {c['surface']}; color: {c['text']}; border: 1px solid {c['border']}; padding: 4px; }}
+    QToolTip {{ background: {c['surface']}; color: {c['text']}; border: 1px solid {c['border']}; border-radius: {rs}px; padding: 4px; }}
     """
 
 
 def apply(app, preference="system"):
+    global _active
     c = colors(preference)
     app.setStyle("Fusion")
     pal = QPalette()
@@ -193,10 +267,11 @@ def apply(app, preference="system"):
     pal.setColor(QPalette.ColorRole.Button, QColor(c["surface"]))
     pal.setColor(QPalette.ColorRole.ButtonText, QColor(c["text"]))
     pal.setColor(QPalette.ColorRole.Highlight, QColor(c["accent"]))
-    pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    pal.setColor(QPalette.ColorRole.HighlightedText, QColor(c["accent_text"]))
     pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(c["muted"]))
     pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(c["surface"]))
     pal.setColor(QPalette.ColorRole.ToolTipText, QColor(c["text"]))
     app.setPalette(pal)
     app.setStyleSheet(stylesheet(c))
+    _active = c
     return c

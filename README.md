@@ -163,11 +163,11 @@ yemu config           # shows the effective settings
 | `[network]` | `name`, `allow_internet` (turns off the isolation warning) |
 | `[analysis]` | `execution_wait` (seconds before logs are collected), `timeout`, `max_sample_mb`, `max_events`, `max_pcap_mb` |
 | `[scoring]` | score weights and verdict thresholds |
-| `[rules]` | `source` (`yara-forge`/`github-repo`), `package` (`core`/`extended`/`full`), `repo_url` and `branch` (for `github-repo`), `ref` (pin a release tag or commit), `auto_update`, `update_interval_days`, `max_download_mb` |
+| `[rules]` | `sources` (one `[[rules.sources]]` table per rule set, see [YARA rules](#yara-rules)), `auto_update`, `update_interval_days`, `max_download_mb` (per source) |
 | `[updates]` | `check_on_startup`, `include_prereleases`, `check_interval_hours` |
 | `[ui]` | `theme` (`system`/`light`/`dark`) |
 
-You can also edit all of these on the desktop app's **Settings** page.
+You can also edit all of these on the desktop app's **Settings** page. If `config.toml` can't be parsed, or a value has the wrong type or an unknown choice (for example `timeout = "900"` or `backend = "qemuu"`), YEMU stops with a `Config error:` naming the file and the key instead of running on defaults; `yemu paths` and `yemu config --init --force` still work so you can find or reset the file.
 
 ## Updates
 
@@ -181,16 +181,38 @@ YEMU's default rule source is **[YARA Forge](https://github.com/YARAHQ/yara-forg
 | `extended` | ~10,700 | You'd rather see more hits and don't mind triaging a few false positives |
 | `full` | everything | You're researching or hunting and noise is acceptable |
 
-With `[rules].auto_update = true` (the default), the desktop app re-syncs the rules in the background when they're older than `update_interval_days` (7 by default), or when you switch to a different source. From the command line:
+You can sync several sources at once. Each `[[rules.sources]]` entry is either a YARA Forge package or any GitHub rule repository, and each one lands in its own rule set; all of them are loaded for every analysis. `ref` is optional and pins a release tag or commit.
+
+```toml
+[rules]
+auto_update = true
+update_interval_days = 7
+
+[[rules.sources]]
+source = "yara-forge"
+package = "core"
+
+[[rules.sources]]
+source = "github-repo"
+repo_url = "https://github.com/Neo23x0/signature-base"
+branch = "master"
+```
+
+Older configs with a single `source`/`package`/`repo_url` under `[rules]` are read as one entry, and saving from Settings writes the new format. In the desktop app, **Settings → Updates** has the source list with **Add source** and **Remove**.
+
+With `[rules].auto_update = true` (the default), the desktop app re-syncs in the background when any configured set has never been synced or is older than `update_interval_days` (7 by default). From the command line:
 
 ```bash
+yemu sync-rules              # sync every configured source
 yemu update rules            # sync if an update is due
 yemu update rules --force    # sync now
-yemu sync-rules --package extended
+yemu sync-rules --package extended                                        # one extra set, just this once
 yemu sync-rules --repo https://github.com/<owner>/<repo> --branch main   # any GitHub rule repository
 ```
 
-To automate this on a server, schedule `yemu update rules` with cron or Task Scheduler. A successful sync replaces rule sets that YEMU downloaded earlier from other sources. Your own rules, in the **My rules** group or the `rules/custom` folder, are never touched.
+One failing source doesn't stop the others: its previous set stays in place, the failure is reported, and the command exits with 1. A full sync removes YEMU-managed sets that are no longer in `[rules].sources`, including one-off `--package`/`--repo` sets. Your own rules, in the **My rules** group or the `rules/custom` folder, are never touched.
+
+To automate this on a server, schedule `yemu update rules` with cron or Task Scheduler.
 
 ### YEMU itself
 
@@ -260,12 +282,13 @@ yemu gui              # or: python main.py, or the yemu-gui launcher
 | **History** | Every analysis, with verdict counts, search by file name or ID, and a verdict filter. Double-click a row to open its report. |
 | **Report** | Score gauge and verdict. Hashes and times. Counts of YARA hits, processes, file operations and network IOCs. Tabs for the **process tree**, **YARA** matches (with matched strings), a filterable **behaviour** timeline, **network** IOCs and raw JSON. Export to PDF or JSON. |
 | **VMs** | Shows the backend and its acceleration, and each VM's state and snapshots. Create a VM (with live progress), start, stop, open its console, or delete it. |
-| **YARA rules** | Built-in rules (read-only), your own rules and synced rule sets, in an editor with syntax highlighting. **Validate** compiles the rule, and saving also checks it. Synced sets are read-only, because each update replaces them. **Update now** re-syncs the configured source. |
-| **Settings** | Backend, default VM and snapshot, timeouts, QEMU folder and acceleration, the network-isolation override, theme and rule source. Also shows where data is stored, and **Run checks** runs `yemu doctor`. |
+| **YARA rules** | Built-in rules (read-only), your own rules and synced rule sets, in an editor with syntax highlighting. **Validate** compiles the rule, and saving also checks it. Synced sets are read-only, because each update replaces them. **Update now** re-syncs every configured source, and the panel shows each source's synced version and date. |
+| **Settings** | Backend, default VM and snapshot, timeouts, QEMU folder and acceleration, the network-isolation override, theme, and the list of YARA rule sources (**Add source**, **Remove**). Also shows where data is stored, and **Run checks** runs `yemu doctor`. |
 
 Shortcuts: `Ctrl+O` opens a sample, and `Ctrl+1` to `Ctrl+5` switch pages. The theme follows the system light/dark setting unless you set one in Settings.
 
 ![Analyze page, dark theme](docs/screenshots/analyze-dark.png)
+![Analyze page, light theme](docs/screenshots/analyze-light.png)
 
 ### Command line (Linux and Windows)
 

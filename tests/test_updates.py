@@ -116,9 +116,14 @@ def test_app_check_respects_setting_and_interval():
 
 
 # --- rules --------------------------------------------------------------------------------
+REPO = {"source": "github-repo", "repo_url": "https://github.com/Yara-Rules/rules", "branch": "master", "ref": ""}
+
+
 def _write_manifest(set_name, days_ago):
     ts = (datetime.datetime.now() - datetime.timedelta(days=days_ago)).isoformat()
-    (paths.synced_rules_dir() / yara_sync.MANIFEST).write_text(
+    folder = paths.synced_rules_dir() / set_name
+    folder.mkdir(exist_ok=True)
+    (folder / yara_sync.MANIFEST).write_text(
         json.dumps({"set_name": set_name, "timestamp": ts, "commit": "x"}), encoding="utf-8"
     )
 
@@ -130,21 +135,26 @@ def test_rules_update_due():
     assert not updates.rules_update_due(cfg)
     _write_manifest("yara-forge-core", days_ago=8)
     assert updates.rules_update_due(cfg)  # older than the 7-day default
+    _write_manifest("yara-forge-core", days_ago=0)
+    cfg["rules"]["sources"].append(REPO)
+    assert updates.rules_update_due(cfg)  # a source was added and never synced
     _write_manifest("Yara-Rules-rules", days_ago=0)
-    assert updates.rules_update_due(cfg)  # configured source changed
+    assert not updates.rules_update_due(cfg)
+    _write_manifest("Yara-Rules-rules", days_ago=8)
+    assert updates.rules_update_due(cfg)  # one of two sets is stale
     cfg["rules"]["auto_update"] = False
     assert not updates.rules_update_due(cfg)
 
 
 def test_from_config_builds_yara_forge_and_repo_sources():
-    forge = YaraRuleSync.from_config(yemu_config.DEFAULTS["rules"])
+    forge = YaraRuleSync.from_config(yemu_config.DEFAULTS["rules"]["sources"][0])
     assert (forge.set_name, forge.release_asset) == ("yara-forge-core", "yara-forge-rules-core.zip")
-    ext = YaraRuleSync.from_config(yemu_config.DEFAULTS["rules"], package="extended")
+    ext = YaraRuleSync.from_config(yemu_config.DEFAULTS["rules"]["sources"][0], package="extended")
     assert ext.release_asset == "yara-forge-rules-extended.zip"
-    repo = YaraRuleSync.from_config({**yemu_config.DEFAULTS["rules"], "source": "github-repo"})
+    repo = YaraRuleSync.from_config(REPO)
     assert repo.set_name == "Yara-Rules-rules" and not repo.release_asset
     with pytest.raises(yara_sync.RuleSyncError):
-        YaraRuleSync.from_config({**yemu_config.DEFAULTS["rules"], "package": "nope"})
+        YaraRuleSync.from_config({"source": "yara-forge", "package": "nope"})
 
 
 def test_yara_forge_sync_replaces_older_sets_but_keeps_custom(monkeypatch):
@@ -169,10 +179,11 @@ def test_yara_forge_sync_replaces_older_sets_but_keeps_custom(monkeypatch):
         return _resp(content=archive)
 
     monkeypatch.setattr(yara_sync.requests, "get", get)
-    manifest = updates.update_rules(yemu_config.load())
+    result = updates.update_rules(yemu_config.load())
+    manifest = result["synced"][0]
     assert manifest["commit"] == "20260927" and manifest["set_name"] == "yara-forge-core"
     assert requested[-1].endswith("/releases/download/20260927/yara-forge-rules-core.zip")
     assert os.path.isfile(rules / "yara-forge-core" / "core" / "yara-rules-core.yar")
-    assert manifest["replaced_sets"] == ["Yara-Rules-rules"] and not old.exists()
+    assert result["removed"] == ["Yara-Rules-rules"] and not old.exists()
     assert (custom / "mine.yar").is_file()
     assert not updates.rules_update_due(yemu_config.load())

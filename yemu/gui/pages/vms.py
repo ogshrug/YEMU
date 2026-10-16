@@ -19,9 +19,11 @@ from PySide6.QtWidgets import (
 )
 
 from yemu.core.provisioning import provision_vm
+from yemu.gui import theme
 from yemu.gui.widgets import EmptyState, LogView, button, card, label, page_header
 
-STATE_COLORS = {"running": "#16a34a", "stopped": "#6b7280", "unknown": "#6b7280"}
+# palette token per VM state
+STATE_COLORS = {"running": "ok", "stopped": "muted", "unknown": "muted"}
 
 
 class CreateVMDialog(QDialog):
@@ -181,7 +183,7 @@ class VMsPage(QWidget):
         self.start_btn = button("Start", "play")
         self.stop_btn = button("Stop", "stop")
         self.console_btn = button("Console", "monitor")
-        self.delete_btn = button("Delete", "trash", "Danger", color="#dc2626")
+        self.delete_btn = button("Delete", "trash", "Danger", color=theme.colors(ctx.config["ui"]["theme"])["danger"])
         refresh = button("Refresh", "refresh")
         for b in (self.create_btn, self.start_btn, self.stop_btn, self.console_btn, self.delete_btn):
             bar.addWidget(b)
@@ -276,10 +278,11 @@ class VMsPage(QWidget):
 
     def _populate(self, rows):
         selected = self._selected()
+        colors = theme.colors(self.ctx.config["ui"]["theme"])
         self.model.removeRows(0, self.model.rowCount())
         for name, state, snaps in rows:
             st = QStandardItem(state)
-            st.setForeground(QColor(STATE_COLORS.get(state, "#6b7280")))
+            st.setForeground(QColor(colors[STATE_COLORS.get(state, "muted")]))
             self.model.appendRow(
                 [
                     QStandardItem(name),
