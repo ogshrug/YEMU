@@ -1,9 +1,10 @@
+import asyncio
 import html
 import json
 from typing import Any
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QStandardItem, QStandardItemModel
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, Signal
+from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -58,10 +59,64 @@ class _EventFilter(QSortFilterProxyModel):
             return True
         return any(self.text in str(m.index(row, c, parent).data() or "").lower() for c in range(m.columnCount()))
 
+    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
+        # the proxy's own sort calls the Python data() hundreds of thousands of times for 20k events;
+        # the source model sorts its row list instead and the proxy keeps that order
+        self.sourceModel().sort(column, order)
+
+
+class _RowModel(QAbstractTableModel):
+    """Read-only rows of display values; far lighter than one QStandardItem per cell for 20k events."""
+
+    def __init__(self, headers):
+        super().__init__()
+        self.headers = headers
+        self.rows: list[list] = []
+        self.sort_key: tuple[int, Qt.SortOrder] | None = None
+
+    def set_rows(self, rows):
+        self.beginResetModel()
+        self.rows = rows
+        if self.sort_key:
+            self._sort_rows(*self.sort_key)
+        self.endResetModel()
+
+    def _sort_rows(self, column, order):
+        # Python's sort is stable, also with reverse=True, like Qt's
+        self.rows.sort(key=lambda row: str(row[column]), reverse=order == Qt.SortOrder.DescendingOrder)
+
+    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
+        self.sort_key = (column, order)
+        self.layoutAboutToBeChanged.emit()
+        # keep selections on the same rows (persistent indexes) across the reorder
+        old = self.persistentIndexList()
+        old_rows = [self.rows[i.row()] for i in old]
+        self._sort_rows(column, order)
+        new_pos = {id(row): n for n, row in enumerate(self.rows)}
+        self.changePersistentIndexList(
+            old, [self.index(new_pos[id(row)], i.column()) for row, i in zip(old_rows, old, strict=True)]
+        )
+        self.layoutChanged.emit()
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.rows)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.headers)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole or not index.isValid():
+            return None
+        return self.rows[index.row()][index.column()]
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
+            return None
+        return self.headers[section]
+
 
 def _table(headers, stretch_col):
-    model = QStandardItemModel(0, len(headers))
-    model.setHorizontalHeaderLabels(headers)
+    model = _RowModel(headers)
     proxy = _EventFilter()
     proxy.setSourceModel(model)
     view = QTableView()
@@ -88,10 +143,9 @@ def _clock(ts):
     return f"{int(h):02d}:{int(m):02d}:{s:06.3f}"
 
 
-def _item(value):
-    it = QStandardItem()
-    it.setData(value, Qt.ItemDataRole.DisplayRole)
-    return it
+def _raw_json(report):
+    # "behaviour" is only a filtered copy of "events"; leaving it out halves the text
+    return json.dumps({k: v for k, v in report.items() if k not in ("raw_details", "behaviour")}, indent=2, default=str)
 
 
 class ReportPage(QWidget):
@@ -103,6 +157,7 @@ class ReportPage(QWidget):
         self.ctx = ctx
         self.report = None
         self.raw: tuple[Any, list] = (None, [])
+        self._raw_pending: str | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 20, 28, 24)
@@ -224,14 +279,18 @@ class ReportPage(QWidget):
         self.raw_view.setObjectName("Code")
         self.raw_view.setReadOnly(True)
         self.tabs.addTab(self.raw_view, "Raw JSON")
+        self.tabs.currentChanged.connect(self._on_tab)
 
     # --- loading ---
     def load(self, analysis_id):
         async def fetch():
-            return (
-                await self.ctx.db.get_analysis_details(analysis_id),
-                await self.ctx.db.get_analysis_events(analysis_id),
-            )
+            details = await self.ctx.db.get_analysis_details(analysis_id)
+            events = await self.ctx.db.get_analysis_events(analysis_id)
+            if not details:
+                return details, events, None, ""
+            # building the report and its JSON text takes seconds for large runs: keep it off both threads
+            report = await asyncio.to_thread(build_report, details, events)
+            return details, events, report, await asyncio.to_thread(_raw_json, report)
 
         self.ctx.bridge.call(
             fetch(),
@@ -240,13 +299,13 @@ class ReportPage(QWidget):
         )
 
     def _show(self, result):
-        details, events = result
+        details, events, report, raw_text = result
         if not details:
             QMessageBox.warning(self, "YEMU", "That analysis no longer exists.")
             self.back.emit()
             return
         self.raw = (details, events)
-        r = self.report = build_report(details, events)
+        r = self.report = report
         self.gauge.set_score(r["score"], r["verdict"])
         self.badge.set_verdict(r["verdict"])
         self.title.setText(f"#{r['id']}  {r['filename']}")
@@ -277,20 +336,20 @@ class ReportPage(QWidget):
         self.errors.setText("\n".join(f"Error: {e}" for e in r["errors"]))
         self._fill_yara(r["yara_matches"])
 
-        self.b_model.removeRows(0, self.b_model.rowCount())
-        for e in r["behaviour"]:
-            t = _item(_clock(e["timestamp"]))
-            self.b_model.appendRow(
-                [t, _item(e["type"]), _item(str(e["pid"])), _item(e["process"]), _item(e["description"])]
-            )
-        self.n_model.removeRows(0, self.n_model.rowCount())
-        for ioc in r["iocs"]:
-            self.n_model.appendRow([_item(ioc["type"]), _item(ioc["value"]), _item(ioc["source"])])
-        self.b_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
-        self.raw_view.setPlainText(
-            json.dumps({k: v for k, v in r.items() if k not in ("raw_details",)}, indent=2, default=str)
+        self.b_model.set_rows(
+            [[_clock(e["timestamp"]), e["type"], str(e["pid"]), e["process"], e["description"]] for e in r["behaviour"]]
         )
+        self.n_model.set_rows([[ioc["type"], ioc["value"], ioc["source"]] for ioc in r["iocs"]])
+        self.b_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        # a large dump takes seconds to lay out, so it waits until the Raw JSON tab is opened
+        self.raw_view.clear()
+        self._raw_pending = raw_text
         self.tabs.setCurrentIndex(0)
+
+    def _on_tab(self, index):
+        if self.tabs.widget(index) is self.raw_view and self._raw_pending is not None:
+            self.raw_view.setPlainText(self._raw_pending)
+            self._raw_pending = None
 
     def _fill_process_tree(self, processes):
         self.proc_tree.clear()

@@ -72,11 +72,26 @@ def test_mock_analysis_end_to_end_through_gui(gui, tmp_path):
     assert report.yara_tree.topLevelItemCount() >= 2
     assert report.proc_tree.topLevelItemCount() == 1  # malware_sample -> curl
     assert report.b_model.rowCount() > 0
+    # Raw JSON is filled when its tab is first opened, without the duplicate "behaviour" list
+    assert report.raw_view.toPlainText() == ""
+    report.tabs.setCurrentWidget(report.raw_view)
+    assert pump(app, lambda: report.raw_view.toPlainText() != "")
+    assert '"events"' in report.raw_view.toPlainText() and '"behaviour"' not in report.raw_view.toPlainText()
     # guest/sample-controlled strings must never be rendered as HTML
     from PySide6.QtCore import Qt
 
     assert report.title.textFormat() == Qt.TextFormat.PlainText
     assert page.result_title.textFormat() == Qt.TextFormat.PlainText
+
+    def column(c):
+        return [report.b_proxy.index(r, c).data() for r in range(report.b_proxy.rowCount())]
+
+    times = column(0)
+    assert times == sorted(times) and len(set(times)) > 1
+    report.b_view.sortByColumn(0, Qt.SortOrder.DescendingOrder)
+    assert column(0) == sorted(times, reverse=True)
+    report.b_view.sortByColumn(1, Qt.SortOrder.AscendingOrder)
+    assert column(1) == sorted(column(1))
     report.b_type.setCurrentText("network")
     assert 0 < report.b_proxy.rowCount() < report.b_model.rowCount()
 
