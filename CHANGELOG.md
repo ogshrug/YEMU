@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 (2026-10-16)
 
 ### Look and feel
 - A new "Lab bench" theme for the desktop app: warm paper and graphite neutrals with a petrol-teal accent, in light and dark. The accent never overlaps the green, amber and red verdict colours.
