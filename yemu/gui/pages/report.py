@@ -129,6 +129,9 @@ def _table(headers, stretch_col):
     view.verticalHeader().hide()
     view.verticalHeader().setDefaultSectionSize(28)
     view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    # sizing a column asks the Python model for ~8 roles per sampled cell; Qt's default of 1000 sampled rows
+    # (plus the visible ones) costs about 0.3 s on every refill or sort
+    view.horizontalHeader().setResizeContentsPrecision(200)
     view.horizontalHeader().setSectionResizeMode(stretch_col, QHeaderView.ResizeMode.Stretch)
     return model, proxy, view
 
