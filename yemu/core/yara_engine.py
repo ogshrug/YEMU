@@ -1,5 +1,4 @@
 import asyncio
-import concurrent.futures
 import logging
 import os
 import re
@@ -23,7 +22,6 @@ class YaraEngine:
         self.builtin_rules = Path(builtin_rules) if builtin_rules else None
         self.rules = None
         self.logger = logging.getLogger(__name__)
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self.load_rules()
 
     def _compiles(self, path):
@@ -38,30 +36,17 @@ class YaraEngine:
             self.logger.warning("YARA module not found. Static analysis and memory scanning will be disabled.")
             return
 
-        # namespace -> file; namespaces avoid "duplicated identifier" errors across rule sets
-        rule_files = {}
-        if self.builtin_rules and self.builtin_rules.is_file() and self._compiles(self.builtin_rules):
-            rule_files["builtin"] = str(self.builtin_rules)
+        # usually every file compiles, so compile them all at once and check files one by one only when that fails
+        rule_files = self._rule_files(validate=False)
+        if rule_files:
+            try:
+                self.rules = yara.compile(filepaths=rule_files)
+                self.logger.info(f"Successfully loaded {len(rule_files)} YARA rule files with namespaces.")
+                return
+            except Exception as e:
+                self.logger.warning(f"YARA rules did not compile together ({e}); checking each file")
 
-        if not self.rules_dir.is_dir():
-            self.logger.warning(f"Rules directory {self.rules_dir} does not exist.")
-        else:
-            index_path = self.rules_dir / "index.yar"
-            if index_path.exists() and self._compiles(index_path):
-                rule_files["index"] = str(index_path)
-            else:
-                if index_path.exists():
-                    self.logger.error("Failed to compile index.yar, loading rule files individually")
-                idx = 0
-                for file_path in sorted(self.rules_dir.rglob("*")):
-                    # skip hidden dirs such as an in-progress sync's .sync-* staging folder
-                    if any(part.startswith(".") for part in file_path.relative_to(self.rules_dir).parts):
-                        continue
-                    if file_path.suffix in (".yar", ".yara") and file_path.name != "index.yar":
-                        if self._compiles(file_path):  # skip problematic files
-                            rule_files[f"ns_{idx}"] = str(file_path)
-                            idx += 1
-
+        rule_files = self._rule_files(validate=True)
         if not rule_files:
             self.logger.warning("No valid YARA rules found.")
             return
@@ -74,6 +59,37 @@ class YaraEngine:
             # Last resort: keep *something* loaded
             fallback = rule_files.get("builtin") or next(iter(rule_files.values()))
             self.rules = yara.compile(filepath=fallback)
+
+    def _rule_files(self, validate):
+        # namespace -> file; namespaces avoid "duplicated identifier" errors across rule sets.
+        # With validate, files that don't compile on their own are left out.
+        def usable(path):
+            return not validate or self._compiles(path)
+
+        rule_files = {}
+        if self.builtin_rules and self.builtin_rules.is_file() and usable(self.builtin_rules):
+            rule_files["builtin"] = str(self.builtin_rules)
+
+        if not self.rules_dir.is_dir():
+            if not validate:  # the first pass always runs; log it once
+                self.logger.warning(f"Rules directory {self.rules_dir} does not exist.")
+            return rule_files
+        index_path = self.rules_dir / "index.yar"
+        if index_path.exists() and usable(index_path):
+            rule_files["index"] = str(index_path)
+            return rule_files
+        if index_path.exists():
+            self.logger.error("Failed to compile index.yar, loading rule files individually")
+        idx = 0
+        for file_path in sorted(self.rules_dir.rglob("*")):
+            # skip hidden dirs such as an in-progress sync's .sync-* staging folder
+            if any(part.startswith(".") for part in file_path.relative_to(self.rules_dir).parts):
+                continue
+            if file_path.suffix in (".yar", ".yara") and file_path.name != "index.yar":
+                if usable(file_path):  # skip problematic files
+                    rule_files[f"ns_{idx}"] = str(file_path)
+                    idx += 1
+        return rule_files
 
     def _format_match(self, match):
         """Helper to format a yara.Match object into a serializable dict."""
@@ -130,8 +146,7 @@ class YaraEngine:
         return results
 
     async def scan_file_async(self, filepath):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._thread_pool, self.scan_file, filepath)
+        return await asyncio.to_thread(self.scan_file, filepath)
 
     def scan_memory(self, dump_path):
         results: list[dict] = []
