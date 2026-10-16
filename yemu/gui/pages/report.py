@@ -3,7 +3,7 @@ import html
 import json
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -161,6 +161,7 @@ class ReportPage(QWidget):
         self.report = None
         self.raw: tuple[Any, list] = (None, [])
         self._raw_pending: str | None = None
+        self._requested = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 20, 28, 24)
@@ -295,11 +296,43 @@ class ReportPage(QWidget):
             report = await asyncio.to_thread(build_report, details, events)
             return details, events, report, await asyncio.to_thread(_raw_json, report)
 
+        # a slow load must not overwrite a report that was opened after it
+        self._requested = analysis_id
+        self._clear(f"Loading analysis #{analysis_id}...")
         self.ctx.bridge.call(
             fetch(),
-            self._show,
-            lambda e: QMessageBox.warning(self, "YEMU", f"Could not load analysis #{analysis_id}: {e}"),
+            lambda result: self._show(result) if self._requested == analysis_id else None,
+            lambda e: (
+                QMessageBox.warning(self, "YEMU", f"Could not load analysis #{analysis_id}: {e}")
+                if self._requested == analysis_id
+                else None
+            ),
         )
+
+    def _clear(self, title):
+        """Empties the page so the previous report is never shown (or exported) under a new one."""
+        self.report = None
+        self.raw = (None, [])
+        self._raw_pending = None
+        self.title.setText(title)
+        self.badge.set_verdict("unknown")
+        self.gauge.set_score(0, "unknown")
+        for value in self.meta.values():
+            value.setText("-")
+        for stat in (self.s_yara, self.s_proc, self.s_file, self.s_net):
+            stat.set_value(0)
+        self.status_banner.hide()
+        self.errors.setText("")
+        self.findings.clear()
+        self.proc_tree.clear()
+        self.yara_tree.clear()
+        self.b_model.set_rows([])
+        self.n_model.set_rows([])
+        self.raw_view.clear()
+        self.tabs.setCurrentIndex(0)
+        self.tabs.setEnabled(False)
+        self.export_json.setEnabled(False)
+        self.export_pdf.setEnabled(False)
 
     def _show(self, result):
         details, events, report, raw_text = result
@@ -309,6 +342,9 @@ class ReportPage(QWidget):
             return
         self.raw = (details, events)
         r = self.report = report
+        self.tabs.setEnabled(True)
+        self.export_json.setEnabled(True)
+        self.export_pdf.setEnabled(True)
         self.gauge.set_score(r["score"], r["verdict"])
         self.badge.set_verdict(r["verdict"])
         self.title.setText(f"#{r['id']}  {r['filename']}")
@@ -351,8 +387,12 @@ class ReportPage(QWidget):
 
     def _on_tab(self, index):
         if self.tabs.widget(index) is self.raw_view and self._raw_pending is not None:
-            self.raw_view.setPlainText(self._raw_pending)
+            text, report = self._raw_pending, self.report
             self._raw_pending = None
+            # laying out a large dump takes about a second: paint the tab switch and a placeholder first
+            self.raw_view.setPlainText("Loading...")
+            self.tabs.repaint()
+            QTimer.singleShot(0, lambda: self.raw_view.setPlainText(text) if self.report is report else None)
 
     def _fill_process_tree(self, processes):
         self.proc_tree.clear()
