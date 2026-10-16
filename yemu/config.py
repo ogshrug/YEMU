@@ -54,11 +54,10 @@ DEFAULTS = {
         "malicious_threshold": 70,
     },
     "rules": {
-        "source": "yara-forge",  # yara-forge (curated weekly bundle) | github-repo
-        "package": "core",  # YARA Forge package: core (fewest false positives) | extended | full
-        "repo_url": "https://github.com/Yara-Rules/rules",  # used when source = github-repo
-        "branch": "master",
-        "ref": "",  # pin a release tag (yara-forge) or commit/tag (github-repo); empty = latest
+        # every source is synced into its own set and loaded; entries are
+        # {source = "yara-forge", package = core | extended | full, ref} (curated weekly bundle) or
+        # {source = "github-repo", repo_url, branch, ref}; ref pins a release tag / commit, empty = latest
+        "sources": [{"source": "yara-forge", "package": "core", "ref": ""}],
         "max_download_mb": 100,
         "auto_update": True,  # re-sync in the background when the rules are older than the interval
         "update_interval_days": 7,
@@ -109,14 +108,21 @@ suspicious_threshold = 30
 malicious_threshold = 70
 
 [rules]
-source = "yara-forge"       # yara-forge (curated weekly bundle) | github-repo
-package = "core"            # yara-forge package: core | extended | full
-repo_url = "https://github.com/Yara-Rules/rules"   # used when source = "github-repo"
-branch = "master"
-ref = ""                    # pin a release tag / commit; empty = latest
-max_download_mb = 100
+max_download_mb = 100       # per source
 auto_update = true          # re-sync in the background when older than the interval
 update_interval_days = 7
+
+# One [[rules.sources]] table per rule set. Every source is synced into its own folder and loaded.
+[[rules.sources]]
+source = "yara-forge"       # yara-forge (curated weekly bundle) | github-repo
+package = "core"            # core | extended | full
+ref = ""                    # pin a release tag; empty = latest
+
+# [[rules.sources]]
+# source = "github-repo"
+# repo_url = "https://github.com/Yara-Rules/rules"
+# branch = "master"
+# ref = ""                  # pin a commit / tag; empty = latest
 
 [updates]
 check_on_startup = true     # desktop app checks GitHub for a newer YEMU release
@@ -126,6 +132,30 @@ check_interval_hours = 24
 [ui]
 theme = "system"            # system | light | dark
 """
+
+
+# [rules] keys of the single rule source that older versions wrote, and the defaults they had then
+LEGACY_RULE_KEYS = {
+    "source": "yara-forge",
+    "package": "core",
+    "repo_url": "https://github.com/Yara-Rules/rules",
+    "branch": "master",
+    "ref": "",
+}
+
+
+def _convert_legacy_rules(data):
+    """Turn the old single-source [rules] keys into a one-entry [[rules.sources]] list."""
+    rules = data.get("rules")
+    if not isinstance(rules, dict) or "sources" in rules or not any(k in rules for k in LEGACY_RULE_KEYS):
+        return
+    old = {**LEGACY_RULE_KEYS, **{k: rules.pop(k) for k in list(rules) if k in LEGACY_RULE_KEYS}}
+    if old["source"] == "github-repo":
+        entry = {"source": "github-repo", "repo_url": old["repo_url"], "branch": old["branch"], "ref": old["ref"]}
+    else:
+        entry = {"source": old["source"], "package": old["package"], "ref": old["ref"]}
+    rules["sources"] = [entry]
+    logger.info(f"Converted the single [rules] source to [[rules.sources]]: {entry}")
 
 
 def _merge(base, override):
@@ -149,7 +179,9 @@ def load(path=None):
         return cfg
     try:
         with open(path, "rb") as f:
-            return _merge(cfg, tomllib.load(f))
+            data = tomllib.load(f)
+        _convert_legacy_rules(data)
+        return _merge(cfg, data)
     except (OSError, ValueError) as e:
         logger.error(f"Failed to read config {path}: {e}. Using defaults.")
         return cfg
@@ -173,14 +205,26 @@ def _toml_value(value):
     return json.dumps(str(value))  # JSON string escaping is valid TOML basic-string escaping
 
 
+def _is_table_list(value):
+    return isinstance(value, list) and bool(value) and all(isinstance(v, dict) for v in value)
+
+
 def dumps(cfg):
-    """Serialise a config dict (tables of scalars/lists) to TOML."""
+    """Serialise a config dict (tables of scalars/lists, and lists of tables) to TOML."""
     lines = ["# YEMU configuration (written by YEMU; `yemu config --init --force` restores the commented template)"]
     for section, values in cfg.items():
         lines.append("")
         lines.append(f"[{section}]")
         for key, value in values.items():
-            lines.append(f"{key} = {_toml_value(value)}")
+            if not _is_table_list(value):
+                lines.append(f"{key} = {_toml_value(value)}")
+        # arrays of tables ([[section.key]]) must come after the section's plain keys
+        for key, value in values.items():
+            if _is_table_list(value):
+                for entry in value:
+                    lines.append("")
+                    lines.append(f"[[{section}.{key}]]")
+                    lines.extend(f"{k} = {_toml_value(v)}" for k, v in entry.items())
     return "\n".join(lines) + "\n"
 
 

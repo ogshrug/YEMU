@@ -5,8 +5,8 @@ App updates: query GitHub Releases for ogshrug/YEMU, compare versions, and (on r
 download the package that matches how YEMU was installed, verified against the
 release's SHA256SUMS.txt. Nothing is downloaded or installed without the user asking.
 
-Rule updates: re-sync the configured rule source when the last sync is older than
-[rules].update_interval_days, or when the configured source changed.
+Rule updates: re-sync the configured rule sources when any of them has never been synced
+or was last synced more than [rules].update_interval_days ago.
 """
 
 import datetime
@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 from yemu import __version__, paths
-from yemu.core.yara_sync import YaraRuleSync, last_sync
+from yemu.core.yara_sync import sync_sources, synced_sets, syncs_from_config
 
 try:
     import requests
@@ -217,25 +217,19 @@ def manual_update_hint(release, kind=None):
 
 
 # --- rule updates -----------------------------------------------------------------------------
-def expected_rule_set(rules_cfg):
-    return YaraRuleSync.from_config(rules_cfg).set_name
-
-
 def rules_update_due(cfg, rules_dir=None):
     rcfg = cfg["rules"]
     if not rcfg["auto_update"]:
         return False
-    manifest = last_sync(rules_dir)
-    if not manifest:
-        return True
-    try:
-        if manifest.get("set_name") != expected_rule_set(rcfg):
-            return True  # the configured source changed since the last sync
-    except Exception:
-        return False
-    return _older_than(manifest.get("timestamp"), datetime.timedelta(days=rcfg["update_interval_days"]))
+    synced = synced_sets(rules_dir)
+    interval = datetime.timedelta(days=rcfg["update_interval_days"])
+    for sync in syncs_from_config(rcfg, rules_dir):
+        manifest = synced.get(sync.set_name)
+        if not manifest or _older_than(manifest.get("timestamp"), interval):
+            return True
+    return False
 
 
 def update_rules(cfg, progress=None, rules_dir=None):
-    """Sync the configured rule source now. Returns the sync manifest."""
-    return YaraRuleSync.from_config(cfg["rules"], rules_dir=rules_dir).sync(progress_callback=progress)
+    """Sync every configured rule source now. Returns sync_sources()'s result."""
+    return sync_sources(cfg["rules"], rules_dir=rules_dir, progress_callback=progress)

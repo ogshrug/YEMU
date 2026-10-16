@@ -352,28 +352,38 @@ class RulesPage(QWidget):
 
     # --- sync ---
     def _describe_source(self):
-        from yemu.core.yara_sync import last_sync
+        from yemu.core.yara_sync import RuleSyncError, describe_source, synced_sets, syncs_from_config
 
         r = self.ctx.config["rules"]
-        source = f"YARA Forge {r['package']}" if r["source"] == "yara-forge" else r["repo_url"]
         auto = f"auto-update every {r['update_interval_days']} days" if r["auto_update"] else "auto-update off"
-        m = last_sync()
-        synced = f"last synced {m['commit']} on {m['timestamp'][:10]}" if m else "never synced"
-        self.sync_info.setText(f"Source: {source} · {synced} · {auto}. Change the source in Settings.")
+        try:
+            syncs = syncs_from_config(r)
+        except RuleSyncError as e:
+            self.sync_info.setText(f"Rule sources are invalid: {e}. Fix them in Settings or config.toml.")
+            return
+        synced = synced_sets()
+        lines = []
+        for entry, sync in zip(r["sources"], syncs, strict=True):
+            m = synced.get(sync.set_name)
+            state = f"synced {m['commit']} on {m['timestamp'][:10]}" if m else "never synced"
+            lines.append(f"{describe_source(entry)}: {state}")
+        lines.append(f"{auto.capitalize()}. Change the sources in Settings.")
+        self.sync_info.setText("\n".join(lines))
 
     def _sync(self):
         self.sync_btn.setEnabled(False)
         self.sync_bar.show()
         self.sync_bar.setValue(0)
 
-        def done(manifest):
+        def done(result):
             self.sync_btn.setEnabled(True)
             self.sync_bar.hide()
             self.status.setStyleSheet("")
+            failed = ", ".join(f"{f['set_name']} ({f['error']})" for f in result["failed"])
             self.status.setText(
-                f"Synced {manifest.get('set_name')} {manifest.get('commit', '')}: {manifest.get('file_count', 0)} "
-                f"rule files ({len(manifest.get('skipped_files', []))} skipped)"
+                f"Synced {len(result['synced'])} rule set(s)" + (f". Failed: {failed}" if failed else ".")
             )
+            self.refresh()
 
         def failed(e):
             self.sync_btn.setEnabled(True)

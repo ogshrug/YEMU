@@ -216,41 +216,63 @@ def cmd_vm_delete(args, cfg):
     return 0
 
 
-def _rules_overrides(args):
-    overrides = {"ref": getattr(args, "ref", None)}
-    if getattr(args, "repo", None):
-        overrides.update(source="github-repo", repo_url=args.repo)
-    if getattr(args, "branch", None):
-        overrides["branch"] = args.branch
-    if getattr(args, "package", None):
-        overrides.update(source="yara-forge", package=args.package)
-    return overrides
+def _adhoc_source(args):
+    """The one source given by --package or --repo, or None to sync every configured source."""
+    if args.package:
+        if args.branch:
+            args.parser.error("--branch only applies to --repo")
+        return {"source": "yara-forge", "package": args.package, "ref": args.ref or ""}
+    if args.repo:
+        return {
+            "source": "github-repo",
+            "repo_url": args.repo,
+            "branch": args.branch or "master",
+            "ref": args.ref or "",
+        }
+    if args.branch or args.ref:
+        args.parser.error("--branch and --ref need --package or --repo (configured sources take ref from config)")
+    return None
 
 
-def _sync_rules(cfg, overrides):
-    from yemu.core.yara_sync import YaraRuleSync
+def _progress(current, total, filename):
+    print(f"\r[{current}/{total}] {filename[:60]:<60}", end="", file=sys.stderr, flush=True)
 
-    def progress(current, total, filename):
-        print(f"\r[{current}/{total}] {filename[:60]:<60}", end="", file=sys.stderr, flush=True)
 
-    sync = YaraRuleSync.from_config(cfg["rules"], **overrides)
-    manifest = sync.sync(progress_callback=progress)
-    print(file=sys.stderr)
-    replaced = manifest.get("replaced_sets") or []
+def _print_synced(manifest):
     print(
-        f"Synced {sync.set_name} @ {manifest['commit']}: {manifest['file_count']} rule file(s), "
-        f"{len(manifest['skipped_files'])} skipped -> {sync.target_dir}"
+        f"{manifest['set_name']} @ {manifest['commit']}: {manifest['file_count']} rule file(s), "
+        f"{len(manifest['skipped_files'])} skipped"
     )
-    if replaced:
-        print(f"Removed older synced sets: {', '.join(replaced)}")
-    return manifest
+
+
+def _sync_all_rules(cfg):
+    """Sync every configured source and print the outcome. Returns 1 if any source failed."""
+    from yemu.core.yara_sync import sync_sources
+
+    result = sync_sources(cfg["rules"], progress_callback=_progress)
+    print(file=sys.stderr)
+    for manifest in result["synced"]:
+        _print_synced(manifest)
+    for failure in result["failed"]:
+        print(f"{failure['set_name']}: sync failed: {failure['error']}", file=sys.stderr)
+    for name in result["removed"]:
+        print(f"Removed {name} (no longer in [rules].sources)")
+    return 1 if result["failed"] else 0
 
 
 def cmd_sync_rules(args, cfg):
-    from yemu.core.yara_sync import RuleSyncError
+    from yemu.core.yara_sync import RuleSyncError, syncs_from_config
 
+    source = _adhoc_source(args)
     try:
-        _sync_rules(cfg, _rules_overrides(args))
+        if source is None:
+            return _sync_all_rules(cfg)
+        sync = syncs_from_config({**cfg["rules"], "sources": [source]})[0]
+        manifest = sync.sync(progress_callback=_progress, replace_other_sets=False)
+        print(file=sys.stderr)
+        _print_synced(manifest)
+        if sync.set_name not in {s.set_name for s in syncs_from_config(cfg["rules"])}:
+            print(f"Note: {sync.set_name} is not in [rules].sources, so the next full sync removes it.")
     except (RuleSyncError, OSError) as e:
         print(f"\nRule sync failed: {e}", file=sys.stderr)
         return 1
@@ -259,22 +281,20 @@ def cmd_sync_rules(args, cfg):
 
 def cmd_update(args, cfg):
     from yemu.core import updates
-    from yemu.core.yara_sync import RuleSyncError, last_sync
+    from yemu.core.yara_sync import RuleSyncError, synced_sets, syncs_from_config
 
     what = args.what
     rc = 0
     if what in ("check", "rules"):
-        manifest = last_sync()
-        current = (
-            f"{manifest['set_name']} @ {manifest['commit']} (synced {manifest['timestamp'][:10]})"
-            if manifest
-            else "none"
-        )
-        print(f"YARA rules: {current}")
+        synced = synced_sets()
+        print("YARA rules:")
+        for sync in syncs_from_config(cfg["rules"]):
+            m = synced.get(sync.set_name)
+            print(f"  {sync.set_name}: " + (f"{m['commit']} (synced {m['timestamp'][:10]})" if m else "never synced"))
         due = updates.rules_update_due(cfg)
         if what == "rules" and (due or args.force):
             try:
-                _sync_rules(cfg, {})
+                rc = _sync_all_rules(cfg)
             except (RuleSyncError, OSError) as e:
                 print(f"Rule update failed: {e}", file=sys.stderr)
                 rc = 1
@@ -487,12 +507,13 @@ def build_parser():
     p.add_argument("--backend", choices=BACKENDS)
     p.set_defaults(func=cmd_vm_delete)
 
-    p = sub.add_parser("sync-rules", help="download YARA rules now (default source: YARA Forge core)")
-    p.add_argument("--package", choices=("core", "extended", "full"), help="use this YARA Forge package")
-    p.add_argument("--repo", help="sync a GitHub repository instead (github.com/<owner>/<repo>)")
-    p.add_argument("--branch")
-    p.add_argument("--ref", help="pin a release tag / commit (overrides [rules].ref)")
-    p.set_defaults(func=cmd_sync_rules)
+    p = sub.add_parser("sync-rules", help="download YARA rules now from every source in [rules].sources")
+    one = p.add_mutually_exclusive_group()
+    one.add_argument("--package", choices=("core", "extended", "full"), help="sync only this YARA Forge package")
+    one.add_argument("--repo", help="sync only this GitHub repository (github.com/<owner>/<repo>)")
+    p.add_argument("--branch", help="with --repo: branch to sync")
+    p.add_argument("--ref", help="with --package/--repo: pin a release tag / commit")
+    p.set_defaults(func=cmd_sync_rules, parser=p)
 
     p = sub.add_parser("update", help="check for / install YEMU and YARA rule updates")
     p.add_argument(

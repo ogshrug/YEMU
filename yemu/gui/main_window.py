@@ -166,10 +166,10 @@ class MainWindow(QMainWindow):
         if self._release:
             UpdateDialog(self.ctx, self._release, self).exec()
 
-    def _on_rules_updated(self, manifest):
+    def _on_rules_updated(self, result):
+        failed = ", ".join(f["set_name"] for f in result["failed"])
         self.statusBar().showMessage(
-            f"YARA rules updated: {manifest.get('set_name')} {manifest.get('commit')} "
-            f"({manifest.get('file_count', 0)} rule files)",
+            f"YARA rules updated: {len(result['synced'])} set(s) synced" + (f"; failed: {failed}" if failed else ""),
             8000,
         )
         self.pages["rules"].refresh()

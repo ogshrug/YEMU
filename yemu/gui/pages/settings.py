@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLineEdit,
+    QListWidget,
     QMessageBox,
     QPlainTextEdit,
     QScrollArea,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 from yemu import __version__, paths
 from yemu import config as yemu_config
 from yemu.core.vm_backend import BACKENDS
+from yemu.core.yara_sync import RuleSyncError, describe_source, syncs_from_config
 from yemu.gui.widgets import button, card, label, page_header, show_status
 
 RULE_SOURCES = [
@@ -152,6 +154,11 @@ class SettingsPage(QWidget):
         upl.addWidget(label("Updates", "SectionTitle"))
         cols = QHBoxLayout()
         left = QFormLayout()
+        self.sources: list[dict] = []
+        self.source_list = QListWidget()
+        self.source_list.setObjectName("Plain")
+        self.source_list.setMaximumHeight(110)
+        self.source_list.currentRowChanged.connect(self._update_remove)
         self.rule_source = QComboBox()
         for text, value in RULE_SOURCES:
             self.rule_source.addItem(text, value)
@@ -159,11 +166,22 @@ class SettingsPage(QWidget):
         self.repo = QLineEdit()
         self.repo.setPlaceholderText("https://github.com/<owner>/<repo>")
         self.branch = QLineEdit()
+        self.branch.setPlaceholderText("master")
+        add_source = button("Add source", "plus")
+        add_source.clicked.connect(self._add_source)
+        self.remove_source = button("Remove", "trash")
+        self.remove_source.clicked.connect(self._remove_source)
+        source_buttons = QHBoxLayout()
+        source_buttons.addWidget(add_source)
+        source_buttons.addWidget(self.remove_source)
+        source_buttons.addStretch(1)
         self.rules_auto = QCheckBox("Keep YARA rules up to date automatically")
         self.rules_interval = _spin(1, 90, " days")
-        left.addRow("YARA rule source", self.rule_source)
+        left.addRow("YARA rule sources", self.source_list)
+        left.addRow("New source", self.rule_source)
         left.addRow("Repository", self.repo)
         left.addRow("Branch", self.branch)
+        left.addRow("", source_buttons)
         left.addRow("", self.rules_auto)
         left.addRow("Update rules every", self.rules_interval)
         right = QVBoxLayout()
@@ -253,10 +271,8 @@ class SettingsPage(QWidget):
         self.allow_internet.blockSignals(False)
         self.theme.setCurrentText(c["ui"]["theme"])
         r = c["rules"]
-        value = f"forge:{r['package']}" if r["source"] == "yara-forge" else "repo"
-        self.rule_source.setCurrentIndex(max(0, self.rule_source.findData(value)))
-        self.repo.setText(r["repo_url"])
-        self.branch.setText(r["branch"])
+        self.sources = copy.deepcopy(r["sources"])
+        self._show_sources()
         self.rules_auto.setChecked(bool(r["auto_update"]))
         self.rules_interval.setValue(int(r["update_interval_days"]))
         self.app_check.setChecked(bool(c["updates"]["check_on_startup"]))
@@ -267,6 +283,40 @@ class SettingsPage(QWidget):
         custom = self.rule_source.currentData() == "repo"
         self.repo.setEnabled(custom)
         self.branch.setEnabled(custom)
+
+    def _show_sources(self):
+        self.source_list.clear()
+        self.source_list.addItems([describe_source(entry) for entry in self.sources])
+        self.source_list.setCurrentRow(len(self.sources) - 1)
+        self._update_remove()
+
+    def _update_remove(self):
+        self.remove_source.setEnabled(len(self.sources) > 1 and self.source_list.currentRow() >= 0)
+
+    def _add_source(self):
+        value = self.rule_source.currentData()
+        if value == "repo":
+            entry = {
+                "source": "github-repo",
+                "repo_url": self.repo.text().strip(),
+                "branch": self.branch.text().strip() or "master",
+                "ref": "",
+            }
+        else:
+            entry = {"source": "yara-forge", "package": value.split(":", 1)[1], "ref": ""}
+        try:
+            syncs_from_config({**self.ctx.config["rules"], "sources": [*self.sources, entry]})
+        except RuleSyncError as e:
+            QMessageBox.warning(self, "YEMU", f"Cannot add this rule source. {e}")
+            return
+        self.sources.append(entry)
+        self._show_sources()
+
+    def _remove_source(self):
+        row = self.source_list.currentRow()
+        if len(self.sources) > 1 and row >= 0:
+            del self.sources[row]
+            self._show_sources()
 
     def _check_now(self):
         def done(release, error):
@@ -323,14 +373,11 @@ class SettingsPage(QWidget):
             name=self.net_name.text().strip() or "malware-analysis", allow_internet=self.allow_internet.isChecked()
         )
         c["ui"]["theme"] = self.theme.currentText()
-        source = self.rule_source.currentData()
-        if source == "repo":
-            c["rules"].update(
-                source="github-repo", repo_url=self.repo.text().strip(), branch=self.branch.text().strip() or "master"
-            )
-        else:
-            c["rules"].update(source="yara-forge", package=source.split(":", 1)[1])
-        c["rules"].update(auto_update=self.rules_auto.isChecked(), update_interval_days=self.rules_interval.value())
+        c["rules"].update(
+            sources=copy.deepcopy(self.sources),
+            auto_update=self.rules_auto.isChecked(),
+            update_interval_days=self.rules_interval.value(),
+        )
         c["updates"].update(
             check_on_startup=self.app_check.isChecked(), include_prereleases=self.prerelease.isChecked()
         )

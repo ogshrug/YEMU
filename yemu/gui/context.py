@@ -64,7 +64,7 @@ class AppContext(QObject):
     analyses_changed = Signal()
     config_changed = Signal()
     update_available = Signal(object)  # release dict from core.updates
-    rules_updated = Signal(object)  # sync manifest
+    rules_updated = Signal(object)  # yara_sync.sync_sources() result
 
     def __init__(self, db_path=None):
         super().__init__()
@@ -95,9 +95,13 @@ class AppContext(QObject):
     def run_background_updates(self):
         """Startup: re-sync YARA rules if due and look for a newer YEMU, both off the UI thread."""
         from yemu.core import updates
+        from yemu.core.yara_sync import RuleSyncError
 
-        if updates.rules_update_due(self.config):
-            self.sync_rules(automatic=True)
+        try:
+            if updates.rules_update_due(self.config):
+                self.sync_rules(automatic=True)
+        except RuleSyncError as e:
+            self.log(f"Automatic YARA rule update skipped: {e}", "WARN")
         if updates.app_check_due(self.config):
             self.check_app_update(silent=True)
 
@@ -108,11 +112,14 @@ class AppContext(QObject):
             return
         self.rules_syncing = True
 
-        def done(manifest):
+        def done(result):
             self.rules_syncing = False
-            self.rules_updated.emit(manifest)
+            if automatic:
+                for failure in result["failed"]:
+                    self.log(f"Automatic YARA rule update failed for {failure['set_name']}: {failure['error']}", "WARN")
+            self.rules_updated.emit(result)
             if on_done:
-                on_done(manifest)
+                on_done(result)
 
         def failed(error):
             self.rules_syncing = False

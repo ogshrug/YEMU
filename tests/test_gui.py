@@ -98,14 +98,19 @@ def test_vms_rules_and_settings_pages(gui):
     settings.exec_wait.setValue(7)
     settings.theme.setCurrentText("dark")
     assert not settings.repo.isEnabled()  # repo fields only apply to a custom GitHub source
+    assert settings.source_list.count() == 1 and not settings.remove_source.isEnabled()
     settings.rule_source.setCurrentIndex(settings.rule_source.findData("forge:extended"))
+    settings._add_source()
+    assert settings.source_list.count() == 2 and settings.remove_source.isEnabled()
+    settings._remove_source()  # removes the selected (last) entry
+    assert [e["package"] for e in settings.sources] == ["core"]
     settings.rules_interval.setValue(3)
     settings.app_check.setChecked(False)
     settings.save()
     saved = yemu_config.load()
     assert saved["analysis"]["execution_wait"] == 7
     assert saved["ui"]["theme"] == "dark"
-    assert (saved["rules"]["source"], saved["rules"]["package"]) == ("yara-forge", "extended")
+    assert saved["rules"]["sources"] == [{"source": "yara-forge", "package": "core", "ref": ""}]
     assert saved["rules"]["update_interval_days"] == 3
     assert saved["updates"]["check_on_startup"] is False
     assert ctx.backend.name == "mock"
@@ -132,3 +137,26 @@ def test_update_badge_and_dialog(gui):
     assert dlg.hint.text().startswith("pip install --upgrade")  # tests run from source, not a frozen build
     assert not dlg.primary.isHidden() and dlg.primary.text() == "Copy command"
     dlg.deleteLater()
+
+
+def test_settings_adds_a_github_rule_source(gui, monkeypatch):
+    app, ctx, win = gui
+    warnings = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda *a: warnings.append(a[2]))
+    settings = win.pages["settings"]
+    settings.rule_source.setCurrentIndex(settings.rule_source.findData("forge:core"))
+    settings._add_source()  # duplicate of the default source
+    assert "same rule set" in warnings[-1] and settings.source_list.count() == 1
+    settings.rule_source.setCurrentIndex(settings.rule_source.findData("repo"))
+    settings.repo.setText("https://gitlab.com/a/b")
+    settings._add_source()
+    assert "Not a GitHub repository" in warnings[-1] and settings.source_list.count() == 1
+    settings.repo.setText("https://github.com/Neo23x0/signature-base")
+    settings.branch.setText("main")
+    settings._add_source()
+    assert settings.source_list.item(1).text() == "github.com/Neo23x0/signature-base (main)"
+    settings.save()
+    sources = yemu_config.load()["rules"]["sources"]
+    assert [s["source"] for s in sources] == ["yara-forge", "github-repo"]
+    assert sources[1]["repo_url"] == "https://github.com/Neo23x0/signature-base" and sources[1]["branch"] == "main"
+    assert "github.com/Neo23x0/signature-base (main): never synced" in win.pages["rules"].sync_info.text()
