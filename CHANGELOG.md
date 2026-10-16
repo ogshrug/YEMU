@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Look and feel
+- A new "Lab bench" theme for the desktop app: warm paper and graphite neutrals with a petrol-teal accent, in light and dark. The accent never overlaps the green, amber and red verdict colours.
+- Every colour in the app now comes from the theme: stage tracker, run and VM states, the drop zone, verdict badges, the YARA editor highlighting and the backend status dot all follow light and dark.
+- One corner radius scale, visible keyboard focus on inputs, buttons, tables and checkboxes, and the selected page in the sidebar is marked with an accent bar. The sidebar shield and page icons follow a live theme switch.
+
+### YARA rules
+- Several rule sources at once: `[rules].sources` is a list of `[[rules.sources]]` tables (YARA Forge packages and GitHub repositories), each synced into its own rule set and all loaded for every analysis.
+- Configs with the old single `source`/`package`/`repo_url`/`branch`/`ref` keys under `[rules]` are converted on load, and the next save writes the new format.
+- One failing source no longer blocks the rest: its previous set stays in place, and `yemu sync-rules` / `yemu update rules` report it and exit with 1. A full sync removes YEMU-managed sets that are no longer configured.
+- `yemu sync-rules --package`/`--repo` syncs one extra set; `--branch` or `--ref` on their own are now an error. `yemu update check` lists every source with its synced version.
+- **Settings → Updates** has a source list with **Add source** and **Remove**; the YARA rules page shows each source's synced version and date.
+
+### Reliability
+- A `config.toml` that can't be parsed, or has a value of the wrong type (`timeout = "900"`, `true` for a number) or an unknown choice (`backend`, `accel`, `theme`, rule `source`), is reported as a config error instead of being silently replaced by defaults. The CLI prints one `Config error:` line and exits 2 (`yemu paths` and `yemu config --init` still work); the desktop app shows the error and exits without touching the file.
+- CLI crashes print one `Error:` line pointing at `yemu.log`, which has the traceback (`-v` also prints it). Ctrl+C prints `Interrupted.` and exits 130.
+- Unexpected errors in the desktop app are logged and shown in a dialog instead of disappearing.
+- Analyses left `running` by a YEMU that was closed or killed mid-run are marked `interrupted` when the database is next opened.
+- The Analyze page says why a sample can't be used (a folder, a missing file, a file over the size limit, or a file that can't be read) and keeps Start disabled.
+- A failure to close the database on exit is logged.
+
 ## 0.7.0 (2026-09-29)
 
 ### YARA rules
