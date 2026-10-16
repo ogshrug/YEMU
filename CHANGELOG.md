@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.5 (2026-10-16)
 
 ### Performance
 - The YARA rules are compiled once per analysis instead of three times. Files are only checked one by one when the full set fails to compile.
