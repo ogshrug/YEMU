@@ -40,7 +40,8 @@ def label(text="", object_name=None, wrap=False, selectable=False, rich=False):
 def button(text, icon_name=None, object_name=None, color=None):
     btn = QPushButton(text)
     if icon_name:
-        btn.setIcon(theme.icon(icon_name, color or ("#ffffff" if object_name == "Primary" else "#8a94a6"), 16))
+        c = theme.active()
+        btn.setIcon(theme.icon(icon_name, color or (c["accent_text"] if object_name == "Primary" else c["muted"]), 16))
     if object_name:
         btn.setObjectName(object_name)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -86,19 +87,17 @@ def human_time(value):
 class VerdictBadge(QLabel):
     def __init__(self, verdict="unknown", parent=None):
         super().__init__(parent)
+        self.setObjectName("Badge")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.set_verdict(verdict)
 
     def set_verdict(self, verdict):
         verdict = (verdict or "unknown").lower()
-        c = QColor(theme.VERDICT_COLORS.get(verdict, theme.VERDICT_COLORS["unknown"]))
-        rgb = f"{c.red()},{c.green()},{c.blue()}"
         self.setText(verdict.upper())
-        # rgba(): Qt reads 8-digit hex as #AARRGGBB, not #RRGGBBAA
-        self.setStyleSheet(
-            f"QLabel {{ color: rgb({rgb}); background: rgba({rgb},0.12); border: 1px solid rgba({rgb},0.45);"
-            f" border-radius: 10px; padding: 3px 10px; font-weight: 700; font-size: 11px; letter-spacing: 1px; }}"
-        )
+        # styled per verdict by theme.stylesheet(); a dynamic property needs a re-polish to apply
+        self.setProperty("verdict", verdict if verdict in theme.VERDICT_COLORS else "unknown")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class ScoreGauge(QWidget):
@@ -171,6 +170,7 @@ class DropZone(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("DropZone")
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumHeight(170)
@@ -179,7 +179,7 @@ class DropZone(QFrame):
         lay.setSpacing(6)
         self.icon = QLabel()
         self.icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.icon.setPixmap(theme.icon("analyze", "#7b73ff", 36).pixmap(QSize(36, 36)))
+        self.icon.setPixmap(theme.icon("analyze", theme.active()["accent"], 36).pixmap(QSize(36, 36)))
         self.title = label("Drop a sample here", "SectionTitle")
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint = label(
@@ -191,9 +191,9 @@ class DropZone(QFrame):
         self._set_active(False)
 
     def _set_active(self, active):
-        c = "#7b73ff" if active else "rgba(128,128,140,0.45)"
-        bg = "rgba(123,115,255,0.08)" if active else "transparent"
-        self.setStyleSheet(f"DropZone {{ border: 2px dashed {c}; border-radius: 12px; background: {bg}; }}")
+        self.setProperty("active", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -219,13 +219,14 @@ class StageTracker(QWidget):
     """Vertical list of pipeline stages: pending, active, done, warned or failed."""
 
     SYMBOLS = {"pending": "○", "active": "◉", "done": "✓", "warn": "!", "failed": "✕", "skipped": "–"}
+    # palette token per state
     COLORS = {
-        "pending": None,
-        "active": "#7b73ff",
-        "done": "#16a34a",
-        "warn": "#d97706",
-        "failed": "#dc2626",
-        "skipped": None,
+        "pending": "muted",
+        "active": "accent",
+        "done": "ok",
+        "warn": "warn",
+        "failed": "danger",
+        "skipped": "muted",
     }
 
     def __init__(self, stages, parent=None):
@@ -255,14 +256,13 @@ class StageTracker(QWidget):
         if key not in self.rows:
             return
         mark, text = self.rows[key]
-        color = self.COLORS.get(state)
+        c = theme.active()
         mark.setText(self.SYMBOLS[state])
-        style = f"color: {color};" if color else "color: palette(mid);"
-        mark.setStyleSheet(style + "font-weight: 700;")
+        mark.setStyleSheet(f"color: {c[self.COLORS[state]]}; font-weight: 700;")
         text.setStyleSheet(
             "font-weight: 600;"
             if state == "active"
-            else ("color: palette(mid);" if state in ("pending", "skipped") else "")
+            else (f"color: {c['muted']};" if state in ("pending", "skipped") else "")
         )
         self.states = getattr(self, "states", {})
         self.states[key] = state
@@ -299,7 +299,7 @@ class EmptyState(QWidget):
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ic = QLabel()
         ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ic.setPixmap(theme.icon(icon_name, "#98a2b3", 40).pixmap(QSize(40, 40)))
+        ic.setPixmap(theme.icon(icon_name, theme.active()["muted"], 40).pixmap(QSize(40, 40)))
         t = label(title, "SectionTitle")
         t.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h = label(hint, "Muted", wrap=True)

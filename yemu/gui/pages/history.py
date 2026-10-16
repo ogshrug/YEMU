@@ -16,7 +16,8 @@ from yemu.gui import theme
 from yemu.gui.widgets import EmptyState, StatCard, button, human_time, page_header
 
 COLUMNS = ["ID", "File", "Verdict", "Score", "Status", "Started"]
-STATUS_COLORS = {"failed": "#dc2626", "timeout": "#dc2626", "interrupted": "#d97706", "running": "#7b73ff"}
+# palette token per run status
+STATUS_COLORS = {"failed": "danger", "timeout": "danger", "interrupted": "warn", "running": "accent"}
 
 
 class _Filter(QSortFilterProxyModel):
@@ -62,7 +63,8 @@ class HistoryPage(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search by file name or ID")
         self.search.setClearButtonEnabled(True)
-        self.search.addAction(theme.icon("search", "#98a2b3", 16), QLineEdit.ActionPosition.LeadingPosition)
+        muted = theme.colors(ctx.config["ui"]["theme"])["muted"]
+        self.search.addAction(theme.icon("search", muted, 16), QLineEdit.ActionPosition.LeadingPosition)
         self.verdict = QComboBox()
         self.verdict.addItems(["All verdicts", "Malicious", "Suspicious", "Clean", "Manual", "Unknown"])
         refresh = button("Refresh", "refresh")
@@ -133,7 +135,7 @@ class HistoryPage(QWidget):
             status = r.get("status") or ""
             s_item = QStandardItem(status)
             if status in STATUS_COLORS:
-                s_item.setForeground(QColor(STATUS_COLORS[status]))
+                s_item.setForeground(QColor(theme.colors(self.ctx.config["ui"]["theme"])[STATUS_COLORS[status]]))
             self.model.appendRow(
                 [
                     id_item,

@@ -34,7 +34,7 @@ KEYWORDS = (
 
 
 class YaraHighlighter(QSyntaxHighlighter):
-    def __init__(self, document, dark):
+    def __init__(self, document, palette):
         super().__init__(document)
 
         def fmt(color, bold=False, italic=False):
@@ -45,18 +45,6 @@ class YaraHighlighter(QSyntaxHighlighter):
             f.setFontItalic(italic)
             return f
 
-        palette = (
-            {"kw": "#c792ea", "str": "#c3e88d", "var": "#82aaff", "num": "#f78c6c", "cmt": "#6b7280", "hex": "#ffcb6b"}
-            if dark
-            else {
-                "kw": "#7c3aed",
-                "str": "#15803d",
-                "var": "#1d4ed8",
-                "num": "#c2410c",
-                "cmt": "#6b7280",
-                "hex": "#a16207",
-            }
-        )
         self.rules = [
             (QRegularExpression(r"\b(" + "|".join(KEYWORDS) + r")\b"), fmt(palette["kw"], bold=True)),
             (QRegularExpression(r"[$#@!][A-Za-z0-9_*]*"), fmt(palette["var"])),
@@ -153,7 +141,8 @@ class RulesPage(QWidget):
         self.editor.setObjectName("Code")
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.editor.setTabStopDistance(28)
-        self.highlighter = YaraHighlighter(self.editor.document(), theme.is_dark(ctx.config["ui"]["theme"]))
+        syntax = theme.SYNTAX_DARK if theme.is_dark(ctx.config["ui"]["theme"]) else theme.SYNTAX_LIGHT
+        self.highlighter = YaraHighlighter(self.editor.document(), syntax)
         self.editor.textChanged.connect(self._mark_dirty)
         rl.addWidget(self.editor, 1)
         self.status = label("", "Muted", wrap=True)
@@ -196,6 +185,7 @@ class RulesPage(QWidget):
             ("My rules", sorted(self._custom_dir().glob("*.yar*")), False, self._custom_dir()),
         ]
         synced_root = paths.synced_rules_dir()
+        muted = theme.colors(self.ctx.config["ui"]["theme"])["muted"]
         synced = sorted(
             p
             for p in synced_root.rglob("*")
@@ -214,7 +204,7 @@ class RulesPage(QWidget):
             for p in files:
                 child = QTreeWidgetItem([str(p.relative_to(base)) if base in p.parents else p.name])
                 child.setData(0, Qt.ItemDataRole.UserRole, (str(p), ro))
-                child.setIcon(0, theme.icon("rules", "#98a2b3", 14))
+                child.setIcon(0, theme.icon("rules", muted, 14))
                 top.addChild(child)
             self.tree.addTopLevelItem(top)
             top.setExpanded(len(files) < 60)
