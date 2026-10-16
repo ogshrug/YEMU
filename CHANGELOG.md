@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+- The YARA rules are compiled once per analysis instead of three times. Files are only checked one by one when the full set fails to compile.
+- Strace and PCAP parsing, scoring, sample hashing and rule loading run in worker threads, so they no longer stall the app while an analysis runs, and the analysis timeout fires on time. Captures are read packet by packet instead of all at once.
+- Large reports open without freezing the window. The Raw JSON tab is filled when it's first opened and leaves out the `behaviour` list, which repeats `events` (Export JSON still includes it).
+
 ## 0.7.1 (2026-10-16)
 
 ### Look and feel
