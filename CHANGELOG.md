@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 (2026-11-02)
+
+### Upgrading from 0.7
+- `[analysis].execution_wait` now means the longest a sample may run, and the default is 60 s. A config saved by an older version keeps its value (often 5 s), which stops most samples before they finish. Raise it under Settings → "Run sample for up to".
+- VMs built before 0.8.0 keep working, but they're server images without a desktop and log in as `ubuntu`. Build a new one with `yemu vm create <name> --distro <ubuntu|fedora|arch|opensuse>` to get the XFCE desktop and the `analyst` account, then delete the old one.
+- Debian 12 is no longer offered for new VMs. Existing Debian VMs still work.
 
 ### Analysis
 - `.deb` packages are installed with `dpkg` under strace, so their maintainer scripts are traced, and then every program the package puts in a `bin/` folder is started (up to 10). Before, a package was run as if it were a binary, failed with "Exec format error", and was reported as `clean`.
