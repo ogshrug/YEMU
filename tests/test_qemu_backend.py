@@ -5,10 +5,11 @@ import json
 import pytest
 import pytest_asyncio
 
-from yemu.core.provisioning import provision_vm
+from yemu.core.provisioning import ProvisioningError, provision_vm
 from yemu.core.qemu_backend import QemuBackend
 from yemu.core.qga import AgentError, GuestAgent
 from yemu.core.vm_backend import PROVISION_NETWORK, VMSpec
+from yemu.core.vm_catalog import CATALOG
 from yemu.core.vm_manager import MockVMManager
 
 
@@ -184,17 +185,25 @@ class FakeProvisioner:
     def create_cloud_init_iso(self, vm_name, user_data):
         return "seed.iso"
 
-    def get_default_user_data(self):
-        return "packages: [yara]"
+    def get_default_user_data(self, distro, desktop):
+        return f"distro: {distro}"
 
 
 class RecordingMock(MockVMManager):
-    def __init__(self):
+    def __init__(self, failed_step=""):
         super().__init__()
         self.calls = []
+        self.failed_step = failed_step
 
     async def run_command(self, vm_name, command, shell="/bin/sh"):
-        return "YEMU_TOOLS_OK" if "YEMU_TOOLS_OK" in command else "done"
+        for marker in ("YEMU_TOOLS_OK", "YEMU_DESKTOP_OK"):
+            if marker in command:
+                return marker
+        if ".err" in command:
+            return self.failed_step
+        if command.startswith("tail "):
+            return "E: Unable to locate package yara"
+        return "done"
 
     async def switch_network(self, vm_name, from_network, to_network):
         self.calls.append(("switch", from_network, to_network))
@@ -223,3 +232,28 @@ async def test_provisioning_flow_isolates_before_snapshot():
         ("snapshot", "clean-baseline"),
     ]
     assert messages[-1] == ("vm1 is ready.", 1.0)
+
+
+@pytest.mark.asyncio
+async def test_provisioning_reports_the_failed_guest_step():
+    backend = RecordingMock(failed_step="FAILED: apt-get install -y yara")
+    with pytest.raises(ProvisioningError, match="apt-get install -y yara(.|\n)*Unable to locate package"):
+        await provision_vm(backend, "vm1", provisioner=FakeProvisioner())
+    assert ("snapshot", "clean-baseline") not in backend.calls  # never snapshot a half-built guest
+
+
+@pytest.mark.parametrize("key", list(CATALOG))
+def test_catalog_user_data_installs_the_agent_first_and_logs_in_the_analyst(key):
+    import yaml
+
+    from yemu.core.vm_provisioner import VMProvisioner
+
+    data = yaml.safe_load(VMProvisioner().get_default_user_data(key, desktop=True))
+    assert data["users"][1]["name"] == "analyst"
+    script = data["write_files"][0]["content"]
+    assert script.index("qemu-guest-agent") < script.index("strace") < script.index("lightdm")
+    assert "autologin-user=analyst" in script and script.rstrip().endswith("touch /var/lib/yemu-provisioned")
+    assert (
+        "lightdm"
+        not in yaml.safe_load(VMProvisioner().get_default_user_data(key, desktop=False))["write_files"][0]["content"]
+    )

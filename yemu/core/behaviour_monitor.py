@@ -118,8 +118,10 @@ class BehaviourMonitor:
                     else exe_path
                 )
                 if ok:
+                    # Chromium/Electron children re-exec themselves through /proc/self/exe: same program, same name
+                    same = exe_path == "/proc/self/exe" and proc["process_name"] != "unknown"
                     self.process_info[current_pid] = {
-                        "process_name": os.path.basename(exe_path),
+                        "process_name": proc["process_name"] if same else os.path.basename(exe_path),
                         "exe_path": exe_path,
                         "cmdline": cmdline or exe_path,
                         "ppid": proc.get("ppid", "unknown"),

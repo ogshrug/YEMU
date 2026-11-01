@@ -223,6 +223,8 @@ class QemuBackend(VMBackend):
             "-monitor",
             "none",
         ]
+        # an absolute pointer, so the mouse lines up with the guest desktop in a window or a VNC viewer
+        cmd += ["-device", "qemu-xhci", "-device", "usb-tablet"]
         if state.get("display"):
             # a window of QEMU's own: works without a VNC viewer, and closing it powers the VM off
             cmd += ["-display", "gtk"]

@@ -73,9 +73,13 @@ def _is_public(ip):
         return False
 
 
-def analyse(events, sample_name="malware_sample"):
+CREATES = re.compile(r"O_CREAT")
+
+
+def analyse(events, sample_name="malware_sample", kind=""):
     """
-    events: parsed behaviour events (dicts from BehaviourMonitor).
+    events: parsed behaviour events (dicts from BehaviourMonitor), in time order. kind: the sample type
+    ("deb" for a package, whose install scripts and launchers are shell by design).
     Returns {"network_alerts", "persistence_detected", "syscall_alerts", "reasons": [...]}.
     """
     reasons = []
@@ -83,6 +87,7 @@ def analyse(events, sample_name="malware_sample"):
     suspicious = 0
     persistence = False
     public_dests = set()
+    created = set()  # files the sample's processes made during the run; deleting those is housekeeping
 
     def add(kind, text):
         nonlocal suspicious
@@ -108,6 +113,8 @@ def analyse(events, sample_name="malware_sample"):
             writes = ev.get("action") in ("write", "delete", "rename", "link", "chmod", "mkdir") or bool(
                 WRITE_FLAGS.search(raw)
             )
+            if ev.get("action") in ("rename", "link", "mkdir") or CREATES.search(raw):
+                created.add(path)
             if any(p in path for p in PERSISTENCE) and writes:
                 persistence = True
                 add("persistence", f"Modified persistence location {path}")
@@ -115,14 +122,14 @@ def analyse(events, sample_name="malware_sample"):
                 add("suspicious", f"Accessed sensitive file {path}")
             elif ev.get("action") == "delete" and path:
                 # a relative name came with a directory fd strace can't resolve, so where it was is unknown
-                if path[0] != "/" or path.startswith(PRIVATE) or path.endswith(DPKG_TEMP):
+                if path[0] != "/" or path.startswith(PRIVATE) or path.endswith(DPKG_TEMP) or path in created:
                     continue
                 add("suspicious", f"Deleted {path}")
         elif etype == "process" and ev.get("action") == "execute":
             name = os.path.basename(path)
             if name in SUSPICIOUS_EXEC:
                 add("suspicious", f"Ran {name}: {ev.get('cmdline', '')[:160]}")
-            elif name in SHELLS and ev.get("ppid") not in ("unknown", None):
+            elif name in SHELLS and ev.get("ppid") not in ("unknown", None) and kind != "deb":
                 add("suspicious", f"Spawned a shell: {ev.get('cmdline', '')[:160]}")
         elif etype == "network" and ev.get("action") == "connect":
             ip = ev.get("dst_ip", "")

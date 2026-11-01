@@ -17,9 +17,19 @@
 - A new Files tab lists what the sample changed (from strace) and what changed on disk, with a filter for each. The "File operations" card now counts files changed.
 - The Network tab lists each indicator once, with every source that saw it and the processes behind it. Indicators the sample's own processes produced come first; PCAP-only rows can be the guest OS's own traffic.
 
+### Analysis VMs
+- `yemu vm create --distro` and the New VM dialog offer one base distro per Linux family, the most popular of each: Ubuntu 26.04 LTS (Debian family), Fedora 44 (Red Hat), Arch Linux and openSUSE Tumbleweed. Debian 12 is no longer offered. `yemu vm catalog` lists them.
+- New VMs get an XFCE desktop that logs in by itself as `analyst` (one account on every distro); `--no-desktop` skips it. The default memory is now 3 GB.
+- Guest setup runs as one logged script (`/var/log/yemu-provision.log`). A failed step stops `vm create` with the step and the end of the log, instead of a guest agent timeout. Installs may take up to two hours.
+- With a desktop running, the programs a `.deb` installs start in the analyst's session, so GUI apps (and apps like VS Code that refuse to run as root) really run. A `.deb` sent to a VM without `dpkg` now fails with a clear message.
+- QEMU VMs get a USB tablet, so the mouse lines up in the VM window.
+- Deleting a file the sample's own processes created during the run (locks, journals, caches) is no longer a finding; deleting a file that was there before still is.
+- For `.deb` packages, shells started by install scripts and launchers are not findings on their own; what those shells run still is.
+- Chromium and Electron helper processes, which re-exec `/proc/self/exe`, keep their program's name instead of showing as `exe`.
+
 ### Interactive sessions
 - On the qemu backend, an interactive session (and `yemu vm start --console`, and Console on the VMs page) opens the VM in a QEMU window, so no VNC viewer is needed.
-- Each interactive session sets a fresh console password for the `ubuntu` user and shows it in the log, along with where the sample is in the guest.
+- Each interactive session sets a fresh password for the `analyst` user (`ubuntu` on VMs built before the catalog) and shows it in the log, along with where the sample is in the guest.
 
 ## 0.7.5 (2026-10-16)
 

@@ -3,6 +3,7 @@ import re
 from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from yemu.core.provisioning import provision_vm
+from yemu.core.vm_catalog import CATALOG
 from yemu.gui import theme
 from yemu.gui.widgets import EmptyState, LogView, button, card, label, page_header
 
@@ -50,12 +52,17 @@ class CreateVMDialog(QDialog):
         )
         self.name.setPlaceholderText("e.g. ubuntu-clean")
         self.distro = QComboBox()
-        self.distro.addItems(["ubuntu", "debian"] + (["windows"] if ctx.backend.name == "libvirt" else []))
+        for key, d in CATALOG.items():
+            self.distro.addItem(f"{d.label} ({d.base} family)", key)
+        if ctx.backend.name == "libvirt":
+            self.distro.addItem("Windows 11", "windows")
+        self.desktop = QCheckBox("XFCE desktop that logs in by itself (slower to build and boot)")
+        self.desktop.setChecked(True)
         self.ram = QSpinBox()
         self.ram.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.ram.setRange(1024, 65536)
         self.ram.setSingleStep(1024)
-        self.ram.setValue(2048)
+        self.ram.setValue(3072)
         self.ram.setSuffix(" MiB")
         self.cpus = QSpinBox()
         self.cpus.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
@@ -69,6 +76,7 @@ class CreateVMDialog(QDialog):
         for text, w in (
             ("Name", self.name),
             ("Distribution", self.distro),
+            ("", self.desktop),
             ("Memory", self.ram),
             ("CPUs", self.cpus),
             ("Disk", self.disk),
@@ -102,7 +110,7 @@ class CreateVMDialog(QDialog):
             QMessageBox.warning(self, "YEMU", "Use letters, digits, '.', '_' or '-' for the VM name.")
             return
         self.running = True
-        for w in (self.name, self.distro, self.ram, self.cpus, self.disk, self.create_btn):
+        for w in (self.name, self.distro, self.desktop, self.ram, self.cpus, self.disk, self.create_btn):
             w.setEnabled(False)
         self.close_btn.setEnabled(False)
         self.bar.show()
@@ -112,7 +120,8 @@ class CreateVMDialog(QDialog):
         coro = provision_vm(
             self.ctx.backend,
             name,
-            distro=self.distro.currentText(),
+            distro=self.distro.currentData(),
+            desktop=self.desktop.isChecked(),
             ram_mb=self.ram.value(),
             cpus=self.cpus.value(),
             disk_gb=self.disk.value(),
@@ -136,7 +145,7 @@ class CreateVMDialog(QDialog):
     def _done(self, password):
         self.running = False
         self.bar.setValue(1000)
-        self.log.append_line(f"Guest console password: {password}")
+        self.log.append_line(f"Guest login: analyst / {password} (interactive sessions set a fresh one)")
         self.step.setText("VM is ready and isolated.")
         self.close_btn.setText("Close")
         self.close_btn.setEnabled(True)

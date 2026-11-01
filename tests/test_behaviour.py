@@ -158,3 +158,37 @@ def test_event_cap_keeps_sensitive_reads():
     reads = [{"type": "file", "action": "open", "path": f"/usr/lib/{i}.so"} for i in range(20)]
     shadow = {"type": "file", "action": "open", "path": "/etc/shadow"}
     assert shadow in _keep_events(reads + [shadow], 5)
+
+
+def test_deleting_what_the_run_created_is_housekeeping_but_old_files_count():
+    events = [
+        {
+            "type": "file",
+            "action": "write",
+            "path": "/home/a/.cache/x.LCK",
+            "raw": 'openat(.., O_WRONLY|O_CREAT, 0644)',
+        },
+        {"type": "file", "action": "delete", "path": "/home/a/.cache/x.LCK", "raw": "unlink(..) = 0"},
+        {"type": "file", "action": "delete", "path": "/home/a/Documents/report.odt", "raw": "unlink(..) = 0"},
+    ]
+    assert [r["text"] for r in heuristics.analyse(events)["reasons"]] == ["Deleted /home/a/Documents/report.odt"]
+
+
+def test_shells_are_expected_in_packages_but_what_they_run_is_not():
+    events = [
+        {"type": "process", "action": "execute", "path": "/usr/bin/bash", "cmdline": "bash postinst", "ppid": "1"},
+        {"type": "process", "action": "execute", "path": "/usr/bin/curl", "cmdline": "curl x", "ppid": "2"},
+    ]
+    assert [r["text"] for r in heuristics.analyse(events, kind="deb")["reasons"]] == ["Ran curl: curl x"]
+    assert len(heuristics.analyse(events)["reasons"]) == 2
+
+
+def test_proc_self_exe_keeps_the_program_name():
+    m = BehaviourMonitor()
+    m.parse_strace(
+        ['10:00:00.1 execve("/usr/share/code/code", ["code"], 0x1 /* 1 vars */) = 0', "10:00:00.2 clone() = 9"], pid="8"
+    )
+    (ev,) = m.parse_strace(
+        ['10:00:00.3 execve("/proc/self/exe", ["code", "--type=gpu"], 0x1 /* 1 vars */) = 0'], pid="9"
+    )
+    assert ev["process_name"] == "code" and ev["path"] == "/proc/self/exe"

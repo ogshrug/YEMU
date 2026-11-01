@@ -25,6 +25,16 @@ STRACE = "strace -ff -tt -s 256"
 DIFF_PRUNE = ("/proc", "/sys", "/dev", "/run", "/tmp/yemu-*", "/var/lib/apt/lists", "/var/log/journal")
 
 
+# with a desktop logged in, a package's programs start in that session as the analyst (GUI apps need a display,
+# and some, like VS Code, refuse to run as root); without one they run as root with no display
+DESKTOP_SESSION = (
+    "as_user=; session=; if [ -S /tmp/.X11-unix/X0 ] && id -u analyst >/dev/null 2>&1; then "
+    "uid=$(id -u analyst); as_user='-u analyst'; "
+    "session=\"env DISPLAY=:0 XAUTHORITY=/home/analyst/.Xauthority HOME=/home/analyst "
+    "XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus\"; fi; "
+)
+
+
 def sample_kind(path):
     """How the guest should run the sample: 'deb', 'elf', 'script' or 'unknown'."""
     with open(path, "rb") as f:
@@ -248,11 +258,13 @@ class Orchestrator:
             self._notify_ui("Opening VM GUI...")
             # the console password is only shown once at VM creation; set a fresh one for this session
             password = secrets.token_urlsafe(9)
-            await self._cmd(run, f"echo {q('ubuntu:' + password)} | chpasswd")
+            # VMs from the catalog have an analyst account; older ones only the image's default user
+            user = "analyst" if (await self._cmd(run, "id -u analyst 2>/dev/null")).strip() else "ubuntu"
+            await self._cmd(run, f"echo {q(user + ':' + password)} | chpasswd")
             await self._cmd(run, f"chmod 755 {q(run.workdir)} && chmod 644 {q(run.guest_sample)}")
             await self.vm_manager.open_gui(run.guest_os)
             self._notify_ui(
-                f"Manual analysis started. VM will remain open. Log in as ubuntu / {password}; "
+                f"Manual analysis started. VM will remain open. Log in as {user} / {password}; "
                 f"the sample is at {run.guest_sample}",
                 "INFO",
             )
@@ -326,13 +338,18 @@ class Orchestrator:
         # a package: install it (its maintainer scripts run as root, which is where packaged malware acts),
         # then start every program it put on the PATH. Dependencies can't be fetched on the isolated network,
         # so install without them; programs that need a missing library or a display fail, and strace shows it.
+        if not (await self._cmd(run, "command -v dpkg")).strip():
+            raise AnalysisAborted(
+                "This VM can't install .deb packages (it has no dpkg). Analyze it on an Ubuntu VM "
+                "(`yemu vm create <name> --distro ubuntu`)."
+            )
         self._notify_ui("Executing sample with strace monitoring: installing the package with dpkg...")
         script = (
             f"cd {w}; {STRACE} -o {log} dpkg --force-depends -i {s} >{w}/install.log 2>&1; "
-            f"echo $? >{w}/install.rc; pkg=$(dpkg-deb -f {s} Package); "
+            f"echo $? >{w}/install.rc; pkg=$(dpkg-deb -f {s} Package); {DESKTOP_SESSION}"
             'for b in $(dpkg -L "$pkg" 2>/dev/null | grep -E "/s?bin/[^/]+$|^/usr/games/" | head -n 10); '
             f'do [ -f "$b" ] && [ -x "$b" ] && echo "$b" >>{w}/launched && '
-            f'({STRACE} -o {log} "$b" </dev/null >/dev/null 2>&1 &); done; touch {w}/done'
+            f'({STRACE} $as_user -o {log} $session "$b" </dev/null >/dev/null 2>&1 &); done; touch {w}/done'
         )
         await self._cmd(run, f"nohup sh -c {q(script)} >/dev/null 2>&1 &")
         while not (await self._cmd(run, f"[ -f {w}/done ] && echo done")).strip():
@@ -501,7 +518,7 @@ class Orchestrator:
         findings: dict[str, Any] = {"reasons": []}
         try:
             self._notify_ui("Computing threat score...")
-            findings = await asyncio.to_thread(heuristics.analyse, run.events)
+            findings = await asyncio.to_thread(heuristics.analyse, run.events, kind=run.kind)
             scorer = ThreatScorer(self.config["scoring"])
             score = scorer.compute({**findings, "yara_count": len(yara_matches)})
             verdict = scorer.get_verdict(score)

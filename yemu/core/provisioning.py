@@ -11,10 +11,13 @@ import os
 import zipfile
 
 from yemu.core.vm_backend import PROVISION_NETWORK, VMSpec
+from yemu.core.vm_catalog import CATALOG, DONE_MARKER
 from yemu.core.vm_provisioner import VMProvisioner
 
-LINUX_DISTROS = ("ubuntu", "debian")
+LINUX_DISTROS = tuple(CATALOG)
 TOOLS_CHECK = "command -v strace && command -v tcpdump && command -v yara && echo YEMU_TOOLS_OK"
+DESKTOP_CHECK = "systemctl is-active display-manager lightdm 2>/dev/null | grep -qx active && echo YEMU_DESKTOP_OK"
+PROVISION_TIMEOUT = 2 * 3600  # a desktop install under software emulation can take an hour or more
 
 
 class ProvisioningError(RuntimeError):
@@ -25,7 +28,8 @@ async def provision_vm(
     backend,
     vm_name,
     distro="ubuntu",
-    ram_mb=2048,
+    desktop=True,
+    ram_mb=3072,
     cpus=2,
     disk_gb=20,
     analysis_network="malware-analysis",
@@ -72,11 +76,11 @@ async def provision_vm(
     procmon_path = None
     if distro in LINUX_DISTROS:
         report(f"Downloading {distro} cloud image (cached after the first run)...")
-        url = provisioner.CLOUD_IMAGES[distro]
+        url = CATALOG[distro].image_url
         backing = await asyncio.to_thread(provisioner.download_file, url, None, download_progress)
         report("Generating cloud-init seed...", 0.36)
         spec.cloud_init_path = await asyncio.to_thread(
-            provisioner.create_cloud_init_iso, vm_name, provisioner.get_default_user_data()
+            provisioner.create_cloud_init_iso, vm_name, provisioner.get_default_user_data(distro, desktop)
         )
     else:
         report("Downloading Windows ISO, VirtIO drivers and Procmon...")
@@ -111,19 +115,21 @@ async def provision_vm(
         await backend.inject_file_via_agent(vm_name, procmon_path, "C:\\Users\\analyst\\Desktop\\Procmon.exe")
 
     if distro in LINUX_DISTROS:
-        report("Waiting for cloud-init to finish installing tools...")
-        # run_command gives up after ~60s, so keep re-waiting while cloud-init is busy
-        for _ in range(15):
-            if await backend.run_command(vm_name, "cloud-init status --wait >/dev/null 2>&1; echo done") != "TIMEOUT":
-                break
-        if "YEMU_TOOLS_OK" not in await backend.run_command(vm_name, TOOLS_CHECK):
-            report("Tools missing after cloud-init, installing with apt...")
-            await backend.run_command(vm_name, "apt-get update && apt-get install -y strace tcpdump yara")
-            # apt may outlive run_command's timeout; give it time to finish in the background
-            for _ in range(20):
-                if "YEMU_TOOLS_OK" in await backend.run_command(vm_name, TOOLS_CHECK):
-                    break
-                await asyncio.sleep(15)
+        what = "tools and the XFCE desktop" if desktop else "tools"
+        report(f"Installing {what} in the guest (this takes a while; log: /var/log/yemu-provision.log)...")
+        waited = 0
+        while "done" not in await backend.run_command(vm_name, f"[ -f {DONE_MARKER} ] && echo done"):
+            if waited >= PROVISION_TIMEOUT:
+                raise ProvisioningError(f"The guest was still installing after {PROVISION_TIMEOUT // 60} minutes.")
+            await asyncio.sleep(20)
+            waited += 20
+            if waited % 300 == 0:
+                last = (await backend.run_command(vm_name, "tail -n 1 /var/log/yemu-provision.log")).strip()
+                report(f"Still installing ({waited // 60} min): {last[:120]}")
+        failed = (await backend.run_command(vm_name, f"cat {DONE_MARKER}.err 2>/dev/null")).strip()
+        if failed:
+            tail = (await backend.run_command(vm_name, "tail -n 15 /var/log/yemu-provision.log")).strip()
+            raise ProvisioningError(f"Guest setup failed: {failed.splitlines()[0][:200]}\n{tail}")
         if "YEMU_TOOLS_OK" not in await backend.run_command(vm_name, TOOLS_CHECK):
             raise ProvisioningError("strace/tcpdump/yara could not be installed in the guest.")
     report("Guest tools installed.", 0.8)
@@ -139,6 +145,14 @@ async def provision_vm(
     if exposed:
         raise ProvisioningError(f"VM is still internet-facing after the switch: {', '.join(exposed)}")
     report("VM is isolated.", 0.9)
+    if distro in LINUX_DISTROS and desktop:
+        report("Waiting for the desktop to start...")
+        for _ in range(30):
+            if "YEMU_DESKTOP_OK" in await backend.run_command(vm_name, DESKTOP_CHECK):
+                break
+            await asyncio.sleep(5)
+        else:
+            raise ProvisioningError("The desktop (lightdm) did not start after the reboot.")
 
     report(f"Taking '{snapshot_name}' snapshot...")
     if not await backend.create_snapshot(vm_name, snapshot_name, "Automated baseline"):
