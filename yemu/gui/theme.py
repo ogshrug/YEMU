@@ -254,10 +254,13 @@ def stylesheet(c):
     """
 
 
-def apply(app, preference="system"):
+def apply(app, preference="system", root=None):
+    """Palette on the app, stylesheet on root (the main window). QApplication.setStyleSheet restyles every widget
+    Qt knows about and took ~300 ms per theme switch; a window stylesheet does the same tree in ~50 ms."""
     global _active
     c = colors(preference)
-    app.setStyle("Fusion")
+    if app.style().name().lower() != "fusion":
+        app.setStyle("Fusion")  # repolishes every widget, so only when it isn't Fusion already
     pal = QPalette()
     pal.setColor(QPalette.ColorRole.Window, QColor(c["bg"]))
     pal.setColor(QPalette.ColorRole.WindowText, QColor(c["text"]))
@@ -272,6 +275,7 @@ def apply(app, preference="system"):
     pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(c["surface"]))
     pal.setColor(QPalette.ColorRole.ToolTipText, QColor(c["text"]))
     app.setPalette(pal)
-    app.setStyleSheet(stylesheet(c))
+    if root is not None:
+        root.setStyleSheet(stylesheet(c))
     _active = c
     return c
