@@ -183,7 +183,9 @@ class MainWindow(QMainWindow):
     def _apply_theme(self):
         from PySide6.QtWidgets import QApplication
 
-        self.colors = theme.apply(QApplication.instance(), self.ctx.config["ui"]["theme"])
+        if theme.colors(self.ctx.config["ui"]["theme"]) is self.colors:
+            return  # config saved without a theme change: skip the restyle
+        self.colors = theme.apply(QApplication.instance(), self.ctx.config["ui"]["theme"], self)
         self.logo.setPixmap(theme.icon("shield", self.colors["accent"], 26).pixmap(QSize(26, 26)))
         for i, (key, _) in enumerate(NAV):
             self.nav.item(i).setIcon(_nav_icon(key, self.colors))

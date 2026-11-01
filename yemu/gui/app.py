@@ -26,13 +26,18 @@ def report_exception(exc_type, exc, tb):
     if os.environ.get("YEMU_SMOKE_TEST"):
         QApplication.exit(1)
         return
-    QMessageBox.critical(None, "YEMU error", f"{exc_type.__name__}: {exc}\n\nDetails are in {log_file()}")
+    # parented to the window so the dialog gets its stylesheet
+    QMessageBox.critical(
+        QApplication.activeWindow(), "YEMU error", f"{exc_type.__name__}: {exc}\n\nDetails are in {log_file()}"
+    )
 
 
 def create_window(app=None, db_path=None):
     ctx = AppContext(db_path=db_path)
-    theme.apply(app or QApplication.instance(), ctx.config["ui"]["theme"])
+    app = app or QApplication.instance()
+    theme.apply(app, ctx.config["ui"]["theme"])  # before the pages are built: they read theme.active()
     window = MainWindow(ctx)
+    theme.apply(app, ctx.config["ui"]["theme"], window)
     ctx.connect_db(on_ready=window.pages["history"].refresh)
     return ctx, window
 

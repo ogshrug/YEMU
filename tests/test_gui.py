@@ -143,6 +143,25 @@ def test_vms_rules_and_settings_pages(gui):
     assert ctx.backend.name == "mock"
 
 
+def test_theme_switch_restyles_the_window_not_the_app(gui, monkeypatch):
+    from yemu.gui import theme
+
+    app, ctx, win = gui
+    assert not app.styleSheet() and win.colors["bg"] in win.styleSheet()
+    other = "light" if win.colors is theme.DARK else "dark"
+    settings = win.pages["settings"]
+    settings.theme.setCurrentText(other)
+    settings.save()
+    assert win.colors is theme.colors(other) and win.colors["bg"] in win.styleSheet() and not app.styleSheet()
+
+    # saving other settings must not pay for a restyle
+    calls = []
+    monkeypatch.setattr(theme, "apply", lambda *a, **k: calls.append(a))
+    settings.exec_wait.setValue(3)
+    settings.save()
+    assert calls == []
+
+
 def test_update_badge_and_dialog(gui):
     app, ctx, win = gui
     release = {
