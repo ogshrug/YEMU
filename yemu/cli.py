@@ -196,7 +196,7 @@ def cmd_vm_create(args, cfg):
 
 def cmd_vm_start(args, cfg):
     backend = _backend(args, cfg)
-    ok = asyncio.run(backend.start_vm(args.name))
+    ok = asyncio.run(backend.start_vm(args.name, display=args.console))
     if ok and args.console:
         asyncio.run(backend.open_gui(args.name))
     print(f"{args.name}: {'started' if ok else 'failed to start'}")
@@ -500,7 +500,7 @@ def build_parser():
     p.set_defaults(func=cmd_vm_create)
     p = vm_sub.add_parser("start", help="boot a VM")
     p.add_argument("name")
-    p.add_argument("--console", action="store_true", help="open a viewer on the VM display")
+    p.add_argument("--console", action="store_true", help="show the VM's screen in a window")
     p.add_argument("--backend", choices=BACKENDS)
     p.set_defaults(func=cmd_vm_start)
     p = vm_sub.add_parser("stop", help="power a VM off")

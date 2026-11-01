@@ -59,7 +59,8 @@ class VMBackend(ABC):
 
     # --- lifecycle ---
     @abstractmethod
-    async def start_vm(self, vm_name): ...
+    async def start_vm(self, vm_name, display=False):
+        """display: show the VM's screen in a window, where the backend can open one itself."""
 
     @abstractmethod
     async def stop_vm(self, vm_name): ...

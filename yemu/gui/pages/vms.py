@@ -309,7 +309,7 @@ class VMsPage(QWidget):
 
         async def console():
             if await b.vm_state(name) != "running":
-                await b.start_vm(name)
+                await b.start_vm(name, display=True)
             return await b.open_gui(name)
 
         actions = {"start": lambda: b.start_vm(name), "stop": lambda: b.stop_vm(name), "console": console}

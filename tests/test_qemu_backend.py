@@ -93,6 +93,24 @@ async def test_guest_agent_exec_and_file_round_trip(agent_server, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_guest_agent_sync_skips_a_stale_reply_larger_than_the_buffer():
+    # the guest agent is one channel: a reply a previous client never read is still queued when the next connects
+    async def handle(reader, writer):
+        req = json.loads(await reader.readline())
+        writer.write(b'{"return": {"out-data": "' + b"A" * (5 * 1024 * 1024) + b'"}}\n')
+        writer.write(b"\xff" + json.dumps({"return": req["arguments"]["id"]}).encode() + b"\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    try:
+        async with GuestAgent("127.0.0.1", server.sockets[0].getsockname()[1]):
+            pass  # connected and synced past the stale data
+    finally:
+        server.close()
+
+
+@pytest.mark.asyncio
 async def test_guest_agent_surfaces_errors(agent_server):
     async with GuestAgent("127.0.0.1", agent_server.port) as qga:
         with pytest.raises(AgentError):

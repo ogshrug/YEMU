@@ -223,6 +223,9 @@ class QemuBackend(VMBackend):
             "-monitor",
             "none",
         ]
+        if state.get("display"):
+            # a window of QEMU's own: works without a VNC viewer, and closing it powers the VM off
+            cmd += ["-display", "gtk"]
         return cmd + self.extra_args
 
     # --- inventory ---
@@ -265,12 +268,12 @@ class QemuBackend(VMBackend):
         return []
 
     # --- lifecycle ---
-    async def start_vm(self, vm_name):
+    async def start_vm(self, vm_name, display=False):
         vm = self._require(vm_name)
         if await self.is_running(vm_name):
             return True
         vm_dir = self._vm_dir(vm_name)
-        state = {"qmp_port": _free_port(), "qga_port": _free_port()}
+        state = {"qmp_port": _free_port(), "qga_port": _free_port(), "display": bool(display)}
         state["vnc_display"] = _free_vnc_display()
         cmd = self.build_command(vm, state)
         self.logger.info(f"Starting QEMU ({self.accel}): {' '.join(cmd)}")
@@ -358,6 +361,8 @@ class QemuBackend(VMBackend):
         if not state:
             self._notify_ui(f"VM {vm_name} is not running.", "CRITICAL")
             return False
+        if state.get("display"):
+            return True  # started with its own window
         address = f"{HOST}:{5900 + state['vnc_display']}"
         for viewer in ("remote-viewer", "vncviewer", "tvnviewer", "gvncviewer"):
             exe = shutil.which(viewer)
@@ -378,7 +383,8 @@ class QemuBackend(VMBackend):
                 self.logger.warning(f"Command '{command}' timed out in guest.")
                 return "TIMEOUT"
             return out
-        except (OSError, asyncio.TimeoutError, AgentError, json.JSONDecodeError) as e:
+        except (OSError, asyncio.TimeoutError, AgentError, json.JSONDecodeError, ValueError) as e:
+            # ValueError: a reply over the stream limit (copy large guest files with pull_file instead)
             self.logger.error(f"run_command failed: {e}")
             return ""
 

@@ -236,7 +236,7 @@ class VMManager(VMBackend):
             self.logger.error(f"Failed to create snapshot: {e}")
             return False
 
-    async def start_vm(self, vm_name):
+    async def start_vm(self, vm_name, display=False):
         self.logger.info(f"Starting VM: {vm_name}")
         dom = self._get_domain(vm_name)
         if not dom:
@@ -569,7 +569,7 @@ class MockVMManager(VMBackend):
     async def create_snapshot(self, vm_name, snapshot_name="clean-baseline", description="Clean state"):
         return True
 
-    async def start_vm(self, vm_name):
+    async def start_vm(self, vm_name, display=False):
         return True
 
     async def wait_for_guest_agent(self, vm_name, timeout=300):
@@ -579,6 +579,10 @@ class MockVMManager(VMBackend):
         return True
 
     async def inject_file(self, vm_name, local_path, guest_path):
+        import hashlib
+
+        with open(local_path, "rb") as f:
+            self.injected = {**getattr(self, "injected", {}), guest_path: hashlib.sha256(f.read()).hexdigest()}
         return True
 
     MOCK_STRACE = {
@@ -602,8 +606,17 @@ class MockVMManager(VMBackend):
     async def run_command(self, vm_name, command, shell="/bin/sh"):
         import shlex
 
+        if command.startswith("sha256sum "):
+            path = shlex.split(command)[1]
+            return f"{getattr(self, 'injected', {}).get(path, '')}  {path}"
         if command.startswith("ls -1 "):
             return "\n".join(["rules.yarc", "sample", *self.MOCK_STRACE])
+        if command.startswith("find / "):
+            return "/tmp/DECRYPT_FILES.txt\n/etc/cron.d/updater"
+        if command.startswith("[ -f ") and command.endswith("echo done"):
+            return "done"
+        if command.startswith("cat ") and "/install.rc" in command:
+            return "0"
         if command.startswith("cat ") and "/strace." in command:
             name = shlex.split(command)[1].rsplit("/", 1)[-1]
             return "\n".join(self.MOCK_STRACE.get(name, []))
@@ -668,6 +681,16 @@ packer_match [packer] /proc/5678/mem
         if guest_path.endswith(".pcap"):
             with open(local_path, "wb") as f:
                 f.write(self.EMPTY_PCAP)
+        elif guest_path.endswith("/strace.tgz"):
+            import io
+            import tarfile
+
+            with tarfile.open(local_path, "w:gz") as tar:
+                for name, lines in self.MOCK_STRACE.items():
+                    data = "\n".join(lines).encode()
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    tar.addfile(info, io.BytesIO(data))
         return True
 
 

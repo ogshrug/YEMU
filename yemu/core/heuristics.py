@@ -60,6 +60,9 @@ SUSPICIOUS_EXEC = {
     "shred",
 }
 SHELLS = {"sh", "bash", "dash", "zsh", "ash"}
+# deleting these is routine: scratch space, dpkg's bookkeeping, and caches that package triggers rebuild
+PRIVATE = ("/tmp/", "/proc/", "/dev/", "/run/", "/var/lib/dpkg/", "/var/cache/debconf/", "/usr/share/mime/")
+DPKG_TEMP = (".dpkg-new", ".dpkg-tmp", ".dpkg-old", ".dpkg-dist")
 WRITE_FLAGS = re.compile(r"O_(WRONLY|RDWR|CREAT|TRUNC|APPEND)")
 
 
@@ -93,14 +96,27 @@ def analyse(events, sample_name="malware_sample"):
     for ev in events:
         etype, path = ev.get("type"), ev.get("path") or ""
         raw = ev.get("raw", "")
+        if etype == "file" and ev.get("source") == "fsdiff":
+            continue  # the filesystem diff includes the guest OS's own changes, so it is shown but never scored
+        if (
+            etype == "file"
+            and ev.get("result")
+            and not (ev["result"] in ("EACCES", "EPERM") and any(p in path for p in SENSITIVE_READ))
+        ):
+            continue  # a failed call touched nothing; only a denied try at a sensitive file still counts
         if etype == "file":
-            writes = ev.get("action") in ("write", "delete") or bool(WRITE_FLAGS.search(raw))
+            writes = ev.get("action") in ("write", "delete", "rename", "link", "chmod", "mkdir") or bool(
+                WRITE_FLAGS.search(raw)
+            )
             if any(p in path for p in PERSISTENCE) and writes:
                 persistence = True
                 add("persistence", f"Modified persistence location {path}")
             elif any(p in path for p in SENSITIVE_READ):
                 add("suspicious", f"Accessed sensitive file {path}")
-            elif ev.get("action") == "delete" and path and not path.startswith(("/tmp/", "/proc/", "/dev/")):
+            elif ev.get("action") == "delete" and path:
+                # a relative name came with a directory fd strace can't resolve, so where it was is unknown
+                if path[0] != "/" or path.startswith(PRIVATE) or path.endswith(DPKG_TEMP):
+                    continue
                 add("suspicious", f"Deleted {path}")
         elif etype == "process" and ev.get("action") == "execute":
             name = os.path.basename(path)

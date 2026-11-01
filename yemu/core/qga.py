@@ -66,7 +66,12 @@ class GuestAgent:
         token = random.randint(1, 2**31)
         await self._send({"execute": "guest-sync-delimited", "arguments": {"id": token}})
         while True:
-            await asyncio.wait_for(self.reader.readuntil(b"\xff"), self.timeout)
+            try:
+                await asyncio.wait_for(self.reader.readuntil(b"\xff"), self.timeout)
+            except asyncio.LimitOverrunError as e:
+                # a reply too large for the stream buffer, left behind by an earlier client: drop it and go on
+                await asyncio.wait_for(self.reader.readexactly(e.consumed), self.timeout)
+                continue
             line = await asyncio.wait_for(self.reader.readline(), self.timeout)
             try:
                 if json.loads(line).get("return") == token:

@@ -138,8 +138,8 @@ async def test_guest_paths_are_quoted_and_listing_is_filtered(db, tmp_path):
     hostile = "strace.1234\nstrace.1;rm -rf /\n$(id)\nstrace.99x"
     vm = RecordingMock(listing=hostile)
     aid = await Orchestrator(db, vm_manager=vm, config=_cfg()).run_analysis(_sample(tmp_path), guest_os="mock-ubuntu")
-    cats = [c for c in vm.commands if c.startswith("cat ") and "strace." in c]
-    assert len(cats) == 1 and cats[0].rstrip("'").endswith("/strace.1234")
+    scans = [c for c in vm.commands if "yara -C" in c]  # the memory scan only takes PIDs from strace.<pid> names
+    assert len(scans) == 1 and "/proc/1234 " in scans[0]
     assert not any("rm -rf" in c or "$(id)" in c for c in vm.commands)
     # the sample's odd file name is sanitised in the guest path
     assert not any("$(reboot)" in c for c in vm.commands)
@@ -174,3 +174,22 @@ def test_heuristics():
     assert f["persistence_detected"] is True
     assert f["syscall_alerts"] == 3  # shadow, bashrc, wget; a plain library open is not suspicious
     assert heuristics.analyse([e for e in events[:1]])["syscall_alerts"] == 0
+
+
+def test_strace_archive_only_yields_plain_strace_logs(tmp_path):
+    import io
+    import tarfile
+
+    from yemu.core.orchestrator import _read_strace_archive
+
+    path = tmp_path / "s.tgz"
+    with tarfile.open(path, "w:gz") as tar:
+        for name in ("strace.20", "strace.3", "../strace.4", "strace.5;rm", "sub/strace.6", "notes"):
+            data = f"log {name}".encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        link = tarfile.TarInfo("strace.7")
+        link.type, link.linkname = tarfile.SYMTYPE, "/etc/passwd"
+        tar.addfile(link)
+    assert _read_strace_archive(str(path)) == [("log strace.3", "3"), ("log strace.20", "20")]

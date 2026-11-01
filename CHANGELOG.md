@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Analysis
+- `.deb` packages are installed with `dpkg` under strace, so their maintainer scripts are traced, and then every program the package puts in a `bin/` folder is started (up to 10). Before, a package was run as if it were a binary, failed with "Exec format error", and was reported as `clean`.
+- A sample that never ran (the guest refused to execute it) now ends as `failed` with the reason, not as `clean`.
+- The copy of the sample inside the VM is checked against its SHA-256 before it runs.
+- File activity has paths and kinds: writes, creates, renames, deletes, `mkdir`, `chmod` and links, with failed calls marked. Writes are reported once per file instead of once per `write()` call.
+- DNS lookups made by the sample's own processes are decoded from strace, so each looked-up domain is tied to the process that asked. IPv6 connects are recorded.
+- A filesystem diff lists every file created or changed on the guest disk during the run. It's shown in the report but never scored, because it also includes the guest OS's own activity.
+- The raw strace logs are kept next to the PCAP (`captures/<id>-strace.tgz`). They come out of the guest as one archive instead of through `cat`, which overflowed the guest agent on large runs and broke every later agent call.
+- When there are more events than `[analysis].max_events`, failed calls and plain file reads are dropped first, so processes and network activity late in a run are no longer cut off.
+- Failed file calls and dpkg's own temporary files no longer count as "Deleted …" findings.
+
+### Report
+- A new Files tab lists what the sample changed (from strace) and what changed on disk, with a filter for each. The "File operations" card now counts files changed.
+- The Network tab lists each indicator once, with every source that saw it and the processes behind it. Indicators the sample's own processes produced come first; PCAP-only rows can be the guest OS's own traffic.
+
+### Interactive sessions
+- On the qemu backend, an interactive session (and `yemu vm start --console`, and Console on the VMs page) opens the VM in a QEMU window, so no VNC viewer is needed.
+- Each interactive session sets a fresh console password for the `ubuntu` user and shows it in the log, along with where the sample is in the guest.
+
 ## 0.7.5 (2026-10-16)
 
 ### Performance

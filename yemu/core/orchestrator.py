@@ -18,6 +18,24 @@ from yemu.core.vm_backend import create_backend
 q = shlex.quote
 STRACE_LOG = re.compile(r"^strace\.(\d+)$")
 MAX_SCAN_PIDS = 10
+MAX_CHANGED_FILES = 5000
+MAX_STRACE_MB = 1024
+STRACE = "strace -ff -tt -s 256"
+# left out of the filesystem diff: virtual filesystems and YEMU's own work folder
+DIFF_PRUNE = ("/proc", "/sys", "/dev", "/run", "/tmp/yemu-*", "/var/lib/apt/lists", "/var/log/journal")
+
+
+def sample_kind(path):
+    """How the guest should run the sample: 'deb', 'elf', 'script' or 'unknown'."""
+    with open(path, "rb") as f:
+        head = f.read(64)
+    if head.startswith(b"!<arch>\ndebian-binary"):
+        return "deb"
+    if head.startswith(b"\x7fELF"):
+        return "elf"
+    if head.startswith(b"#!"):
+        return "script"
+    return "unknown"
 
 
 def _hash_file(path):
@@ -42,6 +60,44 @@ def _parse_strace_logs(logs):
     return events
 
 
+def _read_strace_archive(path):
+    """(content, pid) for each strace.<pid> log in a guest-made tar.gz. Member names come from the guest, so
+    only regular files named strace.<pid> are read, and the total is capped."""
+    import tarfile
+
+    logs, total = [], 0
+    with tarfile.open(path, "r:gz") as tar:
+        for member in tar:
+            m = STRACE_LOG.match(member.name)
+            if not m or not member.isfile():
+                continue
+            total += member.size
+            if total > MAX_STRACE_MB * 1024 * 1024:
+                break
+            f = tar.extractfile(member)
+            if f:
+                logs.append((f.read().decode("utf-8", "replace"), m.group(1)))
+    return sorted(logs, key=lambda log: int(log[1]))
+
+
+def _event_rank(e):
+    """Lower is kept first: processes, network and sensitive files, then file changes, then reads, then failed
+    calls."""
+    if e["type"] != "file" or any(p in e.get("path", "") for p in heuristics.SENSITIVE_READ + heuristics.PERSISTENCE):
+        return 0
+    if e.get("result"):
+        return 3
+    return 2 if e.get("action") == "open" else 1
+
+
+def _keep_events(events, limit):
+    """At most limit events, dropping the least telling ones first; keeps time order."""
+    if len(events) <= limit:
+        return events
+    rank = sorted(range(len(events)), key=lambda i: _event_rank(events[i]))
+    return [events[i] for i in sorted(rank[:limit])]
+
+
 class AnalysisAborted(RuntimeError):
     """The VM could not be prepared safely; the sample was not (fully) executed."""
 
@@ -54,6 +110,7 @@ class _Run:
         self.run_gui = run_gui
         self.run_pcap = run_pcap
         self.analysis_id = None
+        self.kind = sample_kind(sample_path) if os.path.isfile(sample_path) else "unknown"
         self.sha256 = self.md5 = ""
         self.size = 0
         self.static_matches = []
@@ -68,6 +125,7 @@ class _Run:
         self.guest_strace = f"{self.workdir}/strace"
         self.guest_pcap = f"{self.workdir}/capture.pcap"
         self.guest_rules = f"{self.workdir}/rules.yarc"
+        self.marker = f"{self.workdir}/.started"  # its ctime marks the start for the filesystem diff
 
 
 class Orchestrator:
@@ -188,8 +246,16 @@ class Orchestrator:
         await self._prepare_vm(run)
         if run.run_gui:
             self._notify_ui("Opening VM GUI...")
+            # the console password is only shown once at VM creation; set a fresh one for this session
+            password = secrets.token_urlsafe(9)
+            await self._cmd(run, f"echo {q('ubuntu:' + password)} | chpasswd")
+            await self._cmd(run, f"chmod 755 {q(run.workdir)} && chmod 644 {q(run.guest_sample)}")
             await self.vm_manager.open_gui(run.guest_os)
-            self._notify_ui("Manual analysis started. VM will remain open.", "INFO")
+            self._notify_ui(
+                f"Manual analysis started. VM will remain open. Log in as ubuntu / {password}; "
+                f"the sample is at {run.guest_sample}",
+                "INFO",
+            )
             run.keep_vm = True
             await self.db.update_analysis(run.analysis_id, verdict="manual", yara_matches=run.static_matches)
             return
@@ -222,7 +288,7 @@ class Orchestrator:
             raise AnalysisAborted(f"Could not revert to snapshot '{run.snapshot}': {e}") from e
 
         self._notify_ui("Starting VM...")
-        if not await vm.start_vm(run.guest_os):
+        if not await vm.start_vm(run.guest_os, display=run.run_gui):
             raise AnalysisAborted("Failed to start VM.")
 
         self._notify_ui("Waiting for guest agent...")
@@ -242,17 +308,45 @@ class Orchestrator:
             await vm.start_vm(run.guest_os)
             if not await vm.wait_for_guest_agent(run.guest_os, timeout=self.config["vm"]["agent_timeout"]):
                 raise AnalysisAborted("The guest agent did not come back after offline injection.")
+        guest_hash = (await self._cmd(run, f"sha256sum {q(run.guest_sample)} 2>/dev/null")).split()[:1]
+        if guest_hash != [run.sha256]:
+            raise AnalysisAborted("The sample copied into the VM does not match the original (SHA-256 differs).")
 
     async def _execute(self, run):
         if run.run_pcap:
             self._notify_ui("Starting packet capture...")
             await self._cmd(run, f"tcpdump -i any -U -w {q(run.guest_pcap)} >/dev/null 2>&1 &")
-        self._notify_ui("Executing sample with strace monitoring...")
+        await self._cmd(run, f"touch {q(run.marker)}")
         await self.db.add_event(run.analysis_id, "process", 0.1, "INFO", {"msg": "Execution started"})
-        await self._cmd(
-            run,
-            f"chmod +x {q(run.guest_sample)} && cd {q(run.workdir)} && "
-            f"strace -ff -tt -s 256 -o {q(run.guest_strace)} {q(run.guest_sample)} >/dev/null 2>&1 &",
+        w, s, log = q(run.workdir), q(run.guest_sample), q(run.guest_strace)
+        if run.kind != "deb":
+            self._notify_ui("Executing sample with strace monitoring...")
+            await self._cmd(run, f"chmod +x {s} && cd {w} && {STRACE} -o {log} {s} >/dev/null 2>&1 &")
+            return
+        # a package: install it (its maintainer scripts run as root, which is where packaged malware acts),
+        # then start every program it put on the PATH. Dependencies can't be fetched on the isolated network,
+        # so install without them; programs that need a missing library or a display fail, and strace shows it.
+        self._notify_ui("Executing sample with strace monitoring: installing the package with dpkg...")
+        script = (
+            f"cd {w}; {STRACE} -o {log} dpkg --force-depends -i {s} >{w}/install.log 2>&1; "
+            f"echo $? >{w}/install.rc; pkg=$(dpkg-deb -f {s} Package); "
+            'for b in $(dpkg -L "$pkg" 2>/dev/null | grep -E "/s?bin/[^/]+$|^/usr/games/" | head -n 10); '
+            f'do [ -f "$b" ] && [ -x "$b" ] && echo "$b" >>{w}/launched && '
+            f'({STRACE} -o {log} "$b" </dev/null >/dev/null 2>&1 &); done; touch {w}/done'
+        )
+        await self._cmd(run, f"nohup sh -c {q(script)} >/dev/null 2>&1 &")
+        while not (await self._cmd(run, f"[ -f {w}/done ] && echo done")).strip():
+            await asyncio.sleep(3)  # the analysis timeout bounds this
+        rc = (await self._cmd(run, f"cat {w}/install.rc")).strip()
+        log_tail = (await self._cmd(run, f"tail -c 4000 {w}/install.log")).strip()
+        programs = (await self._cmd(run, f"cat {w}/launched 2>/dev/null")).split()
+        self._notify_ui(
+            f"dpkg exited with {rc or '?'}; started {len(programs)} program(s) from the package: "
+            + (", ".join(programs) or "none"),
+            "INFO" if rc == "0" else "WARN",
+        )
+        await self.db.add_event(
+            run.analysis_id, "process", 0.2, "INFO", {"msg": f"dpkg exited with {rc}", "output": log_tail}
         )
 
     async def _memory_scan(self, run):
@@ -318,13 +412,17 @@ class Orchestrator:
         if run.run_pcap:
             await self._collect_pcap(run, acfg["max_pcap_mb"])
         try:
-            listing = await self._cmd(run, f"ls -1 {q(run.workdir)}")
-            # file names come from the guest: only accept strace.<pid>
-            logs = sorted((m.group(0), m.group(1)) for m in map(STRACE_LOG.match, listing.split()) if m)
-            contents = [(await self._cmd(run, f"cat {q(run.workdir + '/' + name)}"), pid) for name, pid in logs]
-            # CPU-bound parsing runs in a worker so the loop (and the analysis timeout) stays responsive
-            run.events = await asyncio.to_thread(_parse_strace_logs, contents)
-            keep = run.events[: acfg["max_events"]]
+            # one archive through the file channel: cat-ing big logs overflows the agent's reply
+            archive = f"{run.workdir}/strace.tgz"
+            await self._cmd(run, f"cd {q(run.workdir)} && tar -czf strace.tgz strace.* 2>/dev/null")
+            # kept next to the PCAP: the raw logs, for anything the parsed events leave out
+            local = str(paths.captures_dir() / f"{run.analysis_id}-strace.tgz")
+            if not await self.vm_manager.pull_file(run.guest_os, archive, local):
+                raise RuntimeError("could not copy the strace logs out of the guest")
+            # CPU-bound unpacking and parsing run in a worker so the loop (and the analysis timeout) stays live
+            logs = await asyncio.to_thread(_read_strace_archive, local)
+            run.events = await asyncio.to_thread(_parse_strace_logs, logs)
+            keep = _keep_events(run.events, acfg["max_events"])
             run.dropped_events = len(run.events) - len(keep)
             await self.db.add_events(run.analysis_id, [(e["type"], e.get("timestamp", 0), "INFO", e) for e in keep])
             counts = Counter(e["type"] for e in run.events)
@@ -332,12 +430,41 @@ class Orchestrator:
             self._notify_ui(f"Behavior: {len(logs)} process(es), {summary}")
             if run.dropped_events:
                 self._notify_ui(
-                    f"Stored the first {len(keep)} events; {run.dropped_events} more were dropped "
-                    "([analysis].max_events).",
+                    f"Stored {len(keep)} events; {run.dropped_events} more were dropped, failed calls and file "
+                    "reads first ([analysis].max_events).",
                     "WARN",
                 )
         except Exception as e:
             self._notify_ui(f"Strace collection failed: {e}", "WARN")
+        await self._collect_changed_files(run)
+
+        execs = [e for e in run.events if e["type"] == "process" and e.get("action") == "execute"]
+        if run.kind != "deb" and execs and all(e.get("result") for e in execs):
+            raise AnalysisAborted(
+                f"The sample never ran: the guest refused to execute it ({execs[0]['result']}). "
+                "YEMU runs Linux ELF binaries, scripts with a #! line and .deb packages."
+            )
+
+    async def _collect_changed_files(self, run):
+        """Every file whose inode changed since the sample started (ctime: dpkg keeps the archive's mtimes).
+        Covers writes strace can't attribute, but also includes whatever the guest OS changed meanwhile."""
+        prune = " -o ".join(f"-path {q(p)}" for p in DIFF_PRUNE)
+        out = await self._cmd(
+            run,
+            f"find / -xdev \\( {prune} \\) -prune -o ! -type d -cnewer {q(run.marker)} -print 2>/dev/null "
+            f"| head -n {MAX_CHANGED_FILES + 1}",
+        )
+        changed = [p for p in out.splitlines() if p.startswith("/")]
+        if len(changed) > MAX_CHANGED_FILES:
+            changed = changed[:MAX_CHANGED_FILES]
+            self._notify_ui(
+                f"More than {MAX_CHANGED_FILES} files changed; storing the first {MAX_CHANGED_FILES}.", "WARN"
+            )
+        await self.db.add_events(
+            run.analysis_id,
+            [("file", 0, "INFO", {"action": "changed", "path": p, "source": "fsdiff"}) for p in changed],
+        )
+        self._notify_ui(f"Filesystem: {len(changed)} file(s) created or changed during the run")
 
     async def _collect_pcap(self, run, max_mb):
         try:
