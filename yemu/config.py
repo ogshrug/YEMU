@@ -44,7 +44,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "allow_internet": False,  # silence the isolation warning when True
     },
     "analysis": {
-        "execution_wait": 5,  # seconds the sample runs before logs are collected
+        "execution_wait": 60,  # longest the sample runs; logs are collected as soon as everything it started exits
         "timeout": 900,  # hard limit for a whole analysis; the VM is powered off after it
         "max_sample_mb": 256,  # refuse larger samples
         "max_events": 20000,  # behaviour events stored per analysis (the rest are counted, not stored)
@@ -98,7 +98,7 @@ name = "malware-analysis"
 allow_internet = false
 
 [analysis]
-execution_wait = 5
+execution_wait = 60         # most seconds the sample runs; collection starts early once it exits
 timeout = 900               # seconds; the VM is powered off when it expires
 max_sample_mb = 256
 max_events = 20000

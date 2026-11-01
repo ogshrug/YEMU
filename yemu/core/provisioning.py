@@ -117,8 +117,12 @@ async def provision_vm(
     if distro in LINUX_DISTROS:
         what = "tools and the XFCE desktop" if desktop else "tools"
         report(f"Installing {what} in the guest (this takes a while; log: /var/log/yemu-provision.log)...")
-        waited = 0
-        while "done" not in await backend.run_command(vm_name, f"[ -f {DONE_MARKER} ] && echo done"):
+        waited = refused = 0
+        while "done" not in (out := await backend.run_command(vm_name, f"echo ok; [ -f {DONE_MARKER} ] && echo done")):
+            # the agent answers pings but won't run commands: blocked by its config or confined by SELinux
+            refused = 0 if "ok" in out else refused + 20
+            if refused >= 900:
+                raise ProvisioningError("The guest agent is up but refuses to run commands (guest-exec is blocked).")
             if waited >= PROVISION_TIMEOUT:
                 raise ProvisioningError(f"The guest was still installing after {PROVISION_TIMEOUT // 60} minutes.")
             await asyncio.sleep(20)

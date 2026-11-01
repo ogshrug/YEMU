@@ -136,6 +136,7 @@ class _Run:
         self.guest_pcap = f"{self.workdir}/capture.pcap"
         self.guest_rules = f"{self.workdir}/rules.yarc"
         self.marker = f"{self.workdir}/.started"  # its ctime marks the start for the filesystem diff
+        self.launched = 0.0  # loop time the sample (or the package's programs) started
 
 
 class Orchestrator:
@@ -333,7 +334,10 @@ class Orchestrator:
         w, s, log = q(run.workdir), q(run.guest_sample), q(run.guest_strace)
         if run.kind != "deb":
             self._notify_ui("Executing sample with strace monitoring...")
-            await self._cmd(run, f"chmod +x {s} && cd {w} && {STRACE} -o {log} {s} >/dev/null 2>&1 &")
+            # only the traced sample goes to the background: a backgrounded `a && b` list keeps the agent's
+            # output pipe open, so the agent would wait for the sample to finish
+            await self._cmd(run, f"chmod +x {s} && cd {w} && ({STRACE} -o {log} {s} </dev/null >/dev/null 2>&1 &)")
+            run.launched = asyncio.get_running_loop().time()
             return
         # a package: install it (its maintainer scripts run as root, which is where packaged malware acts),
         # then start every program it put on the PATH. Dependencies can't be fetched on the isolated network,
@@ -354,6 +358,7 @@ class Orchestrator:
         await self._cmd(run, f"nohup sh -c {q(script)} >/dev/null 2>&1 &")
         while not (await self._cmd(run, f"[ -f {w}/done ] && echo done")).strip():
             await asyncio.sleep(3)  # the analysis timeout bounds this
+        run.launched = asyncio.get_running_loop().time()
         rc = (await self._cmd(run, f"cat {w}/install.rc")).strip()
         log_tail = (await self._cmd(run, f"tail -c 4000 {w}/install.log")).strip()
         programs = (await self._cmd(run, f"cat {w}/launched 2>/dev/null")).split()
@@ -424,8 +429,15 @@ class Orchestrator:
 
     async def _collect(self, run):
         acfg = self.config["analysis"]
+        # let the sample run until everything it started has exited, up to execution_wait from launch;
+        # the [s] keeps the pattern from matching the shell that runs pgrep
+        loop = asyncio.get_running_loop()
+        traced = q(f"-o {run.workdir}/[s]trace")
+        while loop.time() < run.launched + acfg["execution_wait"]:
+            if not (await self._cmd(run, f"pgrep -f -- {traced} >/dev/null && echo running")).strip():
+                break
+            await asyncio.sleep(2)
         self._notify_ui("Collecting behavioral logs...")
-        await asyncio.sleep(acfg["execution_wait"])
         if run.run_pcap:
             await self._collect_pcap(run, acfg["max_pcap_mb"])
         try:

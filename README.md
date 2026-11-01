@@ -161,7 +161,7 @@ yemu config           # shows the effective settings
 | `[vm]` | `backend` (`auto`/`libvirt`/`qemu`/`mock`), `default_vm`, `default_snapshot`, `agent_timeout` |
 | `[qemu]` | `bin_dir` (where QEMU is installed, if not on PATH), `accel` (`auto`/`whpx`/`kvm`/`hvf`/`tcg`), `extra_args` |
 | `[network]` | `name`, `allow_internet` (turns off the isolation warning) |
-| `[analysis]` | `execution_wait` (seconds before logs are collected), `timeout`, `max_sample_mb`, `max_events`, `max_pcap_mb` |
+| `[analysis]` | `execution_wait` (most seconds a sample runs; logs are collected as soon as it exits), `timeout`, `max_sample_mb`, `max_events`, `max_pcap_mb` |
 | `[scoring]` | score weights and verdict thresholds |
 | `[rules]` | `sources` (one `[[rules.sources]]` table per rule set, see [YARA rules](#yara-rules)), `auto_update`, `update_interval_days`, `max_download_mb` (per source) |
 | `[updates]` | `check_on_startup`, `include_prereleases`, `check_interval_hours` |

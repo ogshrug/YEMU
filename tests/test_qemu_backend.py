@@ -242,6 +242,20 @@ async def test_provisioning_reports_the_failed_guest_step():
     assert ("snapshot", "clean-baseline") not in backend.calls  # never snapshot a half-built guest
 
 
+@pytest.mark.asyncio
+async def test_provisioning_stops_when_the_agent_refuses_commands(monkeypatch):
+    class Refusing(RecordingMock):
+        async def run_command(self, vm_name, command, shell="/bin/sh"):
+            return ""  # what run_command returns when guest-exec is blocked
+
+    async def no_sleep(_):
+        pass
+
+    monkeypatch.setattr("yemu.core.provisioning.asyncio.sleep", no_sleep)
+    with pytest.raises(ProvisioningError, match="refuses to run commands"):
+        await provision_vm(Refusing(), "vm1", provisioner=FakeProvisioner())
+
+
 @pytest.mark.parametrize("key", list(CATALOG))
 def test_catalog_user_data_installs_the_agent_first_and_logs_in_the_analyst(key):
     import yaml
@@ -251,7 +265,8 @@ def test_catalog_user_data_installs_the_agent_first_and_logs_in_the_analyst(key)
     data = yaml.safe_load(VMProvisioner().get_default_user_data(key, desktop=True))
     assert data["users"][1]["name"] == "analyst"
     script = data["write_files"][0]["content"]
-    assert script.index("qemu-guest-agent") < script.index("strace") < script.index("lightdm")
+    assert script.index("setenforce 0") < script.index("qemu-guest-agent") < script.index("strace")
+    assert script.index("strace") < script.index("lightdm")
     assert "autologin-user=analyst" in script and script.rstrip().endswith("touch /var/lib/yemu-provisioned")
     assert (
         "lightdm"

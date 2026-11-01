@@ -12,6 +12,8 @@
 - The raw strace logs are kept next to the PCAP (`captures/<id>-strace.tgz`). They come out of the guest as one archive instead of through `cat`, which overflowed the guest agent on large runs and broke every later agent call.
 - When there are more events than `[analysis].max_events`, failed calls and plain file reads are dropped first, so processes and network activity late in a run are no longer cut off.
 - Failed file calls and dpkg's own temporary files no longer count as "Deleted …" findings.
+- `[analysis].execution_wait` is now the longest a sample may run (default 60 s, was 5 s). Logs are collected as soon as everything the sample started has exited. A saved config keeps its old value, so raise it in Settings if it's still 5.
+- Starting the sample no longer holds the guest agent until the sample finishes. That stalled the run and logged "timed out in guest".
 
 ### Report
 - A new Files tab lists what the sample changed (from strace) and what changed on disk, with a filter for each. The "File operations" card now counts files changed.
@@ -22,6 +24,8 @@
 - New VMs get an XFCE desktop that logs in by itself as `analyst` (one account on every distro); `--no-desktop` skips it. The default memory is now 3 GB.
 - Guest setup runs as one logged script (`/var/log/yemu-provision.log`). A failed step stops `vm create` with the step and the end of the log, instead of a guest agent timeout. Installs may take up to two hours.
 - With a desktop running, the programs a `.deb` installs start in the analyst's session, so GUI apps (and apps like VS Code that refuse to run as root) really run. A `.deb` sent to a VM without `dpkg` now fails with a clear message.
+- SELinux is set to permissive on catalog VMs (Fedora, openSUSE). Enforcing, it confines the guest agent, which then can't read the setup log, trace the sample or read `/proc`. On openSUSE, the guest agent's default block on running commands is lifted.
+- `vm create` stops after 15 minutes, with a clear message, if the guest agent answers but refuses to run commands.
 - QEMU VMs get a USB tablet, so the mouse lines up in the VM window.
 - Deleting a file the sample's own processes created during the run (locks, journals, caches) is no longer a finding; deleting a file that was there before still is.
 - For `.deb` packages, shells started by install scripts and launchers are not findings on their own; what those shells run still is.

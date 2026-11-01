@@ -83,13 +83,26 @@ CATALOG = {
 }
 
 DONE_MARKER = "/var/lib/yemu-provisioned"
+# SELinux confines the guest agent (virt_qemu_ga_t): it could not read the provision log, trace the
+# sample or read /proc, so YEMU would never see the guest. A throwaway analysis VM runs permissive.
+PERMISSIVE = (
+    "if command -v setenforce >/dev/null; then setenforce 0; "
+    "sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config; fi; true"
+)
+# openSUSE ships the agent with guest-exec and the file calls blocked (FILTER_RPC_ARGS in
+# /usr/etc/sysconfig/qemu-ga); an admin file in /etc overrides it. Restart so a running agent picks it up.
+AGENT_ON = (
+    "mkdir -p /etc/sysconfig && echo FILTER_RPC_ARGS= >>/etc/sysconfig/qemu-ga && "
+    "systemctl enable qemu-guest-agent; systemctl restart qemu-guest-agent"
+)
 
 
 def provision_script(distro, desktop=True):
     """The first-boot commands for a catalog VM, run by cloud-init."""
     steps = [
+        PERMISSIVE,
         distro.agent,
-        "systemctl enable --now qemu-guest-agent",
+        AGENT_ON,
         distro.tools,
     ]
     if desktop:
