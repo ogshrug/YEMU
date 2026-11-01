@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.8.0 (2026-11-02)
+
+### Upgrading from 0.7
+- `[analysis].execution_wait` now means the longest a sample may run, and the default is 60 s. A config saved by an older version keeps its value (often 5 s), which stops most samples before they finish. Raise it under Settings → "Run sample for up to".
+- VMs built before 0.8.0 keep working, but they're server images without a desktop and log in as `ubuntu`. Build a new one with `yemu vm create <name> --distro <ubuntu|fedora|arch|opensuse>` to get the XFCE desktop and the `analyst` account, then delete the old one.
+- Debian 12 is no longer offered for new VMs. Existing Debian VMs still work.
+
+### Analysis
+- `.deb` packages are installed with `dpkg` under strace, so their maintainer scripts are traced, and then every program the package puts in a `bin/` folder is started (up to 10). Before, a package was run as if it were a binary, failed with "Exec format error", and was reported as `clean`.
+- A sample that never ran (the guest refused to execute it) now ends as `failed` with the reason, not as `clean`.
+- The copy of the sample inside the VM is checked against its SHA-256 before it runs.
+- File activity has paths and kinds: writes, creates, renames, deletes, `mkdir`, `chmod` and links, with failed calls marked. Writes are reported once per file instead of once per `write()` call.
+- DNS lookups made by the sample's own processes are decoded from strace, so each looked-up domain is tied to the process that asked. IPv6 connects are recorded.
+- A filesystem diff lists every file created or changed on the guest disk during the run. It's shown in the report but never scored, because it also includes the guest OS's own activity.
+- The raw strace logs are kept next to the PCAP (`captures/<id>-strace.tgz`). They come out of the guest as one archive instead of through `cat`, which overflowed the guest agent on large runs and broke every later agent call.
+- When there are more events than `[analysis].max_events`, failed calls and plain file reads are dropped first, so processes and network activity late in a run are no longer cut off.
+- Failed file calls and dpkg's own temporary files no longer count as "Deleted …" findings.
+- `[analysis].execution_wait` is now the longest a sample may run (default 60 s, was 5 s). Logs are collected as soon as everything the sample started has exited. A saved config keeps its old value, so raise it in Settings if it's still 5.
+- Starting the sample no longer holds the guest agent until the sample finishes. That stalled the run and logged "timed out in guest".
+
+### Report
+- A new Files tab lists what the sample changed (from strace) and what changed on disk, with a filter for each. The "File operations" card now counts files changed.
+- The Network tab lists each indicator once, with every source that saw it and the processes behind it. Indicators the sample's own processes produced come first; PCAP-only rows can be the guest OS's own traffic.
+
+### Analysis VMs
+- `yemu vm create --distro` and the New VM dialog offer one base distro per Linux family, the most popular of each: Ubuntu 26.04 LTS (Debian family), Fedora 44 (Red Hat), Arch Linux and openSUSE Tumbleweed. Debian 12 is no longer offered. `yemu vm catalog` lists them.
+- New VMs get an XFCE desktop that logs in by itself as `analyst` (one account on every distro); `--no-desktop` skips it. The default memory is now 3 GB.
+- Guest setup runs as one logged script (`/var/log/yemu-provision.log`). A failed step stops `vm create` with the step and the end of the log, instead of a guest agent timeout. Installs may take up to two hours.
+- With a desktop running, the programs a `.deb` installs start in the analyst's session, so GUI apps (and apps like VS Code that refuse to run as root) really run. A `.deb` sent to a VM without `dpkg` now fails with a clear message.
+- SELinux is set to permissive on catalog VMs (Fedora, openSUSE). Enforcing, it confines the guest agent, which then can't read the setup log, trace the sample or read `/proc`. On openSUSE, the guest agent's default block on running commands is lifted.
+- `vm create` stops after 15 minutes, with a clear message, if the guest agent answers but refuses to run commands.
+- QEMU VMs get a USB tablet, so the mouse lines up in the VM window.
+- Deleting a file the sample's own processes created during the run (locks, journals, caches) is no longer a finding; deleting a file that was there before still is.
+- For `.deb` packages, shells started by install scripts and launchers are not findings on their own; what those shells run still is.
+- Chromium and Electron helper processes, which re-exec `/proc/self/exe`, keep their program's name instead of showing as `exe`.
+
+### Interactive sessions
+- On the qemu backend, an interactive session (and `yemu vm start --console`, and Console on the VMs page) opens the VM in a QEMU window, so no VNC viewer is needed.
+- Each interactive session sets a fresh password for the `analyst` user (`ubuntu` on VMs built before the catalog) and shows it in the log, along with where the sample is in the guest.
+
+### Performance
+- Switching between light and dark is about five times faster (a ~430 ms freeze is now ~90 ms). The stylesheet is set on the main window instead of the whole application, and the style is only reset when it isn't Fusion already.
+- Saving settings without changing the theme no longer restyles the window.
+
 ## 0.7.5 (2026-10-16)
 
 ### Performance

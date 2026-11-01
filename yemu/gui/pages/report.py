@@ -219,7 +219,7 @@ class ReportPage(QWidget):
         stats.setSpacing(12)
         self.s_yara = StatCard("YARA hits", accent=theme.VERDICT_COLORS["malicious"])
         self.s_proc = StatCard("Processes")
-        self.s_file = StatCard("File operations")
+        self.s_file = StatCard("Files changed")
         self.s_net = StatCard("Network IOCs")
         for s in (self.s_yara, self.s_proc, self.s_file, self.s_net):
             stats.addWidget(s)
@@ -274,8 +274,29 @@ class ReportPage(QWidget):
         self.b_type.currentTextChanged.connect(self._filter_behaviour)
         self.tabs.addTab(bw, "Behaviour")
 
+        # Files: what the sample's processes changed (strace), then every file changed on disk during the run
+        fw = QWidget()
+        fl = QVBoxLayout(fw)
+        fl.setContentsMargins(12, 12, 12, 12)
+        bar = QHBoxLayout()
+        self.f_search = QLineEdit()
+        self.f_search.setPlaceholderText("Filter files (path, process...)")
+        self.f_search.setClearButtonEnabled(True)
+        self.f_source = QComboBox()
+        self.f_source.addItem("All changes", "")
+        self.f_source.addItem("By the sample (strace)", "sample")
+        self.f_source.addItem("On disk (includes guest OS activity)", "disk diff")
+        bar.addWidget(self.f_search, 1)
+        bar.addWidget(self.f_source)
+        fl.addLayout(bar)
+        self.f_model, self.f_proxy, self.f_view = _table(["Change", "Seen by", "Path", "Process"], 2)
+        fl.addWidget(self.f_view, 1)
+        self.f_search.textChanged.connect(self._filter_files)
+        self.f_source.currentIndexChanged.connect(self._filter_files)
+        self.tabs.addTab(fw, "Files")
+
         # Network
-        self.n_model, _, self.n_view = _table(["Type", "Value", "Source"], 1)
+        self.n_model, _, self.n_view = _table(["Type", "Value", "Source", "Process"], 1)
         self.tabs.addTab(self.n_view, "Network")
 
         # Raw
@@ -355,7 +376,7 @@ class ReportPage(QWidget):
         self.meta["Finished"].setText(human_time(r["finished_at"]))
         self.s_yara.set_value(len(r["yara_matches"]))
         self.s_proc.set_value(len(r["processes"]))
-        self.s_file.set_value(r["counts"].get("file", 0))
+        self.s_file.set_value(len({f["path"] for f in r["changed_files"]}))
         self.s_net.set_value(len(r["iocs"]))
 
         self._fill_process_tree(r["processes"])
@@ -378,7 +399,13 @@ class ReportPage(QWidget):
         self.b_model.set_rows(
             [[_clock(e["timestamp"]), e["type"], str(e["pid"]), e["process"], e["description"]] for e in r["behaviour"]]
         )
-        self.n_model.set_rows([[ioc["type"], ioc["value"], ioc["source"]] for ioc in r["iocs"]])
+        self.n_model.set_rows([[ioc["type"], ioc["value"], ioc["source"], ioc["process"]] for ioc in r["iocs"]])
+        self.f_model.set_rows(
+            [
+                [f["action"], "sample" if f["source"] == "strace" else "disk diff", f["path"], f["process"]]
+                for f in r["changed_files"]
+            ]
+        )
         self.b_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         # a large dump takes seconds to lay out, so it waits until the Raw JSON tab is opened
         self.raw_view.clear()
@@ -460,6 +487,9 @@ class ReportPage(QWidget):
             self.yara_tree.addTopLevelItem(top)
         self.yara_tree.expandToDepth(0)
         self.yara_tree.resizeColumnToContents(0)
+
+    def _filter_files(self):
+        self.f_proxy.set_filter(self.f_search.text(), self.f_source.currentData())
 
     def _filter_behaviour(self):
         t = self.b_type.currentText()

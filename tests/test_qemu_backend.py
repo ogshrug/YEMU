@@ -5,10 +5,11 @@ import json
 import pytest
 import pytest_asyncio
 
-from yemu.core.provisioning import provision_vm
+from yemu.core.provisioning import ProvisioningError, provision_vm
 from yemu.core.qemu_backend import QemuBackend
 from yemu.core.qga import AgentError, GuestAgent
 from yemu.core.vm_backend import PROVISION_NETWORK, VMSpec
+from yemu.core.vm_catalog import CATALOG
 from yemu.core.vm_manager import MockVMManager
 
 
@@ -93,6 +94,24 @@ async def test_guest_agent_exec_and_file_round_trip(agent_server, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_guest_agent_sync_skips_a_stale_reply_larger_than_the_buffer():
+    # the guest agent is one channel: a reply a previous client never read is still queued when the next connects
+    async def handle(reader, writer):
+        req = json.loads(await reader.readline())
+        writer.write(b'{"return": {"out-data": "' + b"A" * (5 * 1024 * 1024) + b'"}}\n')
+        writer.write(b"\xff" + json.dumps({"return": req["arguments"]["id"]}).encode() + b"\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    try:
+        async with GuestAgent("127.0.0.1", server.sockets[0].getsockname()[1]):
+            pass  # connected and synced past the stale data
+    finally:
+        server.close()
+
+
+@pytest.mark.asyncio
 async def test_guest_agent_surfaces_errors(agent_server):
     async with GuestAgent("127.0.0.1", agent_server.port) as qga:
         with pytest.raises(AgentError):
@@ -166,17 +185,25 @@ class FakeProvisioner:
     def create_cloud_init_iso(self, vm_name, user_data):
         return "seed.iso"
 
-    def get_default_user_data(self):
-        return "packages: [yara]"
+    def get_default_user_data(self, distro, desktop):
+        return f"distro: {distro}"
 
 
 class RecordingMock(MockVMManager):
-    def __init__(self):
+    def __init__(self, failed_step=""):
         super().__init__()
         self.calls = []
+        self.failed_step = failed_step
 
     async def run_command(self, vm_name, command, shell="/bin/sh"):
-        return "YEMU_TOOLS_OK" if "YEMU_TOOLS_OK" in command else "done"
+        for marker in ("YEMU_TOOLS_OK", "YEMU_DESKTOP_OK"):
+            if marker in command:
+                return marker
+        if ".err" in command:
+            return self.failed_step
+        if command.startswith("tail "):
+            return "E: Unable to locate package yara"
+        return "done"
 
     async def switch_network(self, vm_name, from_network, to_network):
         self.calls.append(("switch", from_network, to_network))
@@ -205,3 +232,43 @@ async def test_provisioning_flow_isolates_before_snapshot():
         ("snapshot", "clean-baseline"),
     ]
     assert messages[-1] == ("vm1 is ready.", 1.0)
+
+
+@pytest.mark.asyncio
+async def test_provisioning_reports_the_failed_guest_step():
+    backend = RecordingMock(failed_step="FAILED: apt-get install -y yara")
+    with pytest.raises(ProvisioningError, match="apt-get install -y yara(.|\n)*Unable to locate package"):
+        await provision_vm(backend, "vm1", provisioner=FakeProvisioner())
+    assert ("snapshot", "clean-baseline") not in backend.calls  # never snapshot a half-built guest
+
+
+@pytest.mark.asyncio
+async def test_provisioning_stops_when_the_agent_refuses_commands(monkeypatch):
+    class Refusing(RecordingMock):
+        async def run_command(self, vm_name, command, shell="/bin/sh"):
+            return ""  # what run_command returns when guest-exec is blocked
+
+    async def no_sleep(_):
+        pass
+
+    monkeypatch.setattr("yemu.core.provisioning.asyncio.sleep", no_sleep)
+    with pytest.raises(ProvisioningError, match="refuses to run commands"):
+        await provision_vm(Refusing(), "vm1", provisioner=FakeProvisioner())
+
+
+@pytest.mark.parametrize("key", list(CATALOG))
+def test_catalog_user_data_installs_the_agent_first_and_logs_in_the_analyst(key):
+    import yaml
+
+    from yemu.core.vm_provisioner import VMProvisioner
+
+    data = yaml.safe_load(VMProvisioner().get_default_user_data(key, desktop=True))
+    assert data["users"][1]["name"] == "analyst"
+    script = data["write_files"][0]["content"]
+    assert script.index("setenforce 0") < script.index("qemu-guest-agent") < script.index("strace")
+    assert script.index("strace") < script.index("lightdm")
+    assert "autologin-user=analyst" in script and script.rstrip().endswith("touch /var/lib/yemu-provisioned")
+    assert (
+        "lightdm"
+        not in yaml.safe_load(VMProvisioner().get_default_user_data(key, desktop=False))["write_files"][0]["content"]
+    )

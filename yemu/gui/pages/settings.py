@@ -86,7 +86,7 @@ class SettingsPage(QWidget):
         f.addRow("Default VM", self.default_vm)
         f.addRow("Default snapshot", self.default_snap)
         f.addRow("Guest agent timeout", self.agent_timeout)
-        f.addRow("Run sample for", self.exec_wait)
+        f.addRow("Run sample for up to", self.exec_wait)
         f.addRow("Analysis time limit", self.timeout)
         f.addRow("Largest sample", self.max_sample)
         vl.addLayout(f)

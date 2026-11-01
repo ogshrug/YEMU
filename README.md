@@ -71,7 +71,7 @@ YEMU has three VM backends. `[vm].backend = "auto"` (the default) picks the firs
 | `qemu` | Windows, Linux | Runs `qemu-system-x86_64` directly and talks to the guest agent over a local socket. Uses WHPX, KVM or TCG acceleration. Uses QEMU user-mode networking (`restrict=on` for analysis). Snapshots are qcow2 disk snapshots |
 | `mock` | any | Canned responses, so you can explore the UI and CLI without a hypervisor |
 
-Automated analysis needs Linux guests (Ubuntu or Debian cloud images). A Windows 11 guest can be provisioned on the `libvirt` backend, but the automated pipeline (strace, `/proc` scanning) only works on Linux guests today.
+Automated analysis needs Linux guests (see the base distros under "Analysis VMs"). A Windows 11 guest can be provisioned on the `libvirt` backend, but the automated pipeline (strace, `/proc` scanning) only works on Linux guests today.
 
 ## Installation
 
@@ -161,7 +161,7 @@ yemu config           # shows the effective settings
 | `[vm]` | `backend` (`auto`/`libvirt`/`qemu`/`mock`), `default_vm`, `default_snapshot`, `agent_timeout` |
 | `[qemu]` | `bin_dir` (where QEMU is installed, if not on PATH), `accel` (`auto`/`whpx`/`kvm`/`hvf`/`tcg`), `extra_args` |
 | `[network]` | `name`, `allow_internet` (turns off the isolation warning) |
-| `[analysis]` | `execution_wait` (seconds before logs are collected), `timeout`, `max_sample_mb`, `max_events`, `max_pcap_mb` |
+| `[analysis]` | `execution_wait` (most seconds a sample runs; logs are collected as soon as it exits), `timeout`, `max_sample_mb`, `max_events`, `max_pcap_mb` |
 | `[scoring]` | score weights and verdict thresholds |
 | `[rules]` | `sources` (one `[[rules.sources]]` table per rule set, see [YARA rules](#yara-rules)), `auto_update`, `update_interval_days`, `max_download_mb` (per source) |
 | `[updates]` | `check_on_startup`, `include_prereleases`, `check_interval_hours` |
@@ -234,16 +234,28 @@ The pipeline needs a VM that has **qemu-guest-agent** running and a snapshot nam
 ### Automated (recommended, on any host)
 
 ```bash
-yemu vm create ubuntu-clean               # --distro debian, --ram 4096, --cpus 4, --disk 40, --backend qemu
+yemu vm create ubuntu-clean               # --distro fedora, --no-desktop, --ram 4096, --cpus 4, --disk 40
+yemu vm catalog                           # the base distros below
 ```
+
+YEMU builds one VM per Linux family, from the most popular distro in each:
+
+| `--distro` | Distro | Family | Installs samples of type |
+|---|---|---|---|
+| `ubuntu` (default) | Ubuntu 26.04 LTS | Debian | `.deb` |
+| `fedora` | Fedora 44 | Red Hat | (ELF and scripts) |
+| `arch` | Arch Linux | Arch | (ELF and scripts) |
+| `opensuse` | openSUSE Tumbleweed | SUSE | (ELF and scripts) |
+
+Every one gets an XFCE desktop that logs in by itself as `analyst`, so interactive sessions show a real desktop and a package's programs start in that session during an analysis. `--no-desktop` leaves it out, which makes the VM faster to build and boot.
 
 The desktop app's **Prepare New VM** button runs the same flow:
 
-1. Downloads an Ubuntu 24.04 or Debian 12 cloud image. It's cached, so the next VM reuses it.
-2. Builds a cloud-init seed. The seed installs `qemu-guest-agent`, `strace`, `tcpdump` and `yara`, sets a random console password and turns off SSH password login.
+1. Downloads the distro's cloud image. It's cached, so the next VM reuses it.
+2. Builds a cloud-init seed. It creates the `analyst` account with a random password, turns off SSH password login, and installs `qemu-guest-agent`, `strace`, `tcpdump`, `yara` and the desktop. The guest logs the install to `/var/log/yemu-provision.log`, and YEMU stops with the failing step if one fails.
 3. Boots the VM on a **NAT** network so the guest can install its tools (`yemu-provision` on libvirt, user-mode NAT on qemu).
 4. Moves the VM onto the **isolated** analysis network: `malware-analysis` with no `<forward>` on libvirt, or `restrict=on` on qemu. Then it checks that the VM can no longer reach the internet.
-5. Takes the `clean-baseline` snapshot and prints the console password.
+5. Waits for the desktop to start, takes the `clean-baseline` snapshot and prints the `analyst` password. Interactive sessions set a fresh one each time.
 
 Other VM commands: `yemu vm list`, `yemu vm start <name> [--console]`, `yemu vm stop <name>` and `yemu vm delete <name> --yes` (qemu backend).
 

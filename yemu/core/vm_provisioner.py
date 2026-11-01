@@ -9,6 +9,7 @@ import requests
 import yaml
 
 from yemu import paths
+from yemu.core.vm_catalog import ANALYST, CATALOG, provision_script
 
 
 class VMProvisioner:
@@ -19,10 +20,7 @@ class VMProvisioner:
         "windows": "https://software-static.download.prss.microsoft.com/db_releases/Windows_11_Enterprise_Evaluation_Multi.iso",
     }
 
-    CLOUD_IMAGES = {
-        "ubuntu": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-        "debian": "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
-    }
+    CLOUD_IMAGES = {key: d.image_url for key, d in CATALOG.items()}
 
     VIRTIO_WIN_URL = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso"
     PROCMON_URL = "https://download.sysinternals.com/files/ProcessMonitor.zip"
@@ -144,21 +142,34 @@ class VMProvisioner:
         out_path = os.path.join(str(paths.vm_storage_dir()), f"{vm_name}-windows-auto.iso")
         return self._build_iso(files, "OEMDRIVERS", out_path)
 
-    def get_default_user_data(self):
+    def get_default_user_data(self, distro="ubuntu", desktop=True):
+        # everything is installed now, on the NAT network: the analysis network has no internet access
         config = {
-            "package_update": True,
-            # A full upgrade adds minutes and isn't needed for a throwaway analysis guest
-            "package_upgrade": False,
-            # yara must be installed now: the analysis network has no internet access
-            "packages": ["qemu-guest-agent", "strace", "tcpdump", "curl", "yara"],
-            "password": self.guest_password,
-            "chpasswd": {"expire": False},
-            "ssh_pwauth": False,
-            "runcmd": [
-                ["systemctl", "enable", "--now", "qemu-guest-agent"],
+            "users": [
+                "default",
+                {
+                    "name": ANALYST,
+                    "gecos": "YEMU analyst",
+                    "shell": "/bin/bash",
+                    "lock_passwd": False,
+                    "sudo": "ALL=(ALL) NOPASSWD:ALL",
+                },
             ],
+            "chpasswd": {
+                "expire": False,
+                "users": [{"name": ANALYST, "password": self.guest_password, "type": "text"}],
+            },
+            "ssh_pwauth": False,
+            "write_files": [
+                {
+                    "path": "/usr/local/sbin/yemu-provision",
+                    "permissions": "0755",
+                    "content": provision_script(CATALOG[distro], desktop),
+                },
+            ],
+            "runcmd": [["/usr/local/sbin/yemu-provision"]],
         }
-        return yaml.dump(config)
+        return yaml.dump(config, sort_keys=False)
 
     def generate_autounattend_xml(self):
         return """<?xml version="1.0" encoding="utf-8"?>

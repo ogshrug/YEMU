@@ -22,6 +22,7 @@ import sys
 from yemu import __version__, paths
 from yemu import config as yemu_config
 from yemu.core.vm_backend import BACKENDS, create_backend
+from yemu.core.vm_catalog import CATALOG
 
 SEVERITY_PREFIX = {"INFO": "[*]", "WARN": "[!]", "CRITICAL": "[X]"}
 
@@ -153,6 +154,12 @@ def cmd_list_vms(args, cfg):
     return 0
 
 
+def cmd_vm_catalog(args, cfg):
+    for key, d in CATALOG.items():
+        print(f"{key:<10} {d.label:<22} {d.base} family")
+    return 0
+
+
 def cmd_vm_create(args, cfg):
     from yemu.core.provisioning import ProvisioningError, provision_vm
 
@@ -176,6 +183,7 @@ def cmd_vm_create(args, cfg):
                 backend,
                 args.name,
                 distro=args.distro,
+                desktop=not args.no_desktop,
                 ram_mb=args.ram,
                 cpus=args.cpus,
                 disk_gb=args.disk,
@@ -188,7 +196,7 @@ def cmd_vm_create(args, cfg):
         print(f"\n[X] VM preparation failed: {e}", file=sys.stderr)
         return 1
     print(f"\nVM '{args.name}' is ready on the {backend.name} backend.")
-    print(f"Guest console password: {password}")
+    print(f"Guest login: analyst / {password} (interactive sessions set a fresh one)")
     if args.name != cfg["vm"]["default_vm"]:
         print(f'Tip: set default_vm = "{args.name}" under [vm] in {paths.config_file()}')
     return 0
@@ -196,7 +204,7 @@ def cmd_vm_create(args, cfg):
 
 def cmd_vm_start(args, cfg):
     backend = _backend(args, cfg)
-    ok = asyncio.run(backend.start_vm(args.name))
+    ok = asyncio.run(backend.start_vm(args.name, display=args.console))
     if ok and args.console:
         asyncio.run(backend.open_gui(args.name))
     print(f"{args.name}: {'started' if ok else 'failed to start'}")
@@ -487,20 +495,28 @@ def build_parser():
 
     vm = sub.add_parser("vm", help="create and manage analysis VMs")
     vm_sub = vm.add_subparsers(dest="vm_command", required=True)
+    p = vm_sub.add_parser("catalog", help="list the base distros `vm create` can build")
+    p.set_defaults(func=cmd_vm_catalog)
     p = vm_sub.add_parser("list", help="list VMs and snapshots")
     p.add_argument("--backend", choices=BACKENDS)
     p.set_defaults(func=cmd_list_vms)
     p = vm_sub.add_parser("create", help="download a cloud image and build an isolated analysis VM")
     p.add_argument("name")
-    p.add_argument("--distro", choices=("ubuntu", "debian", "windows"), default="ubuntu")
-    p.add_argument("--ram", type=int, default=2048, help="MiB")
+    p.add_argument(
+        "--distro",
+        choices=(*CATALOG, "windows"),
+        default="ubuntu",
+        help="base image: " + ", ".join(f"{k} ({d.label}, {d.base} family)" for k, d in CATALOG.items()),
+    )
+    p.add_argument("--no-desktop", action="store_true", help="skip the XFCE desktop (faster to build and boot)")
+    p.add_argument("--ram", type=int, default=3072, help="MiB")
     p.add_argument("--cpus", type=int, default=2)
     p.add_argument("--disk", type=int, default=20, help="GiB")
     p.add_argument("--backend", choices=BACKENDS)
     p.set_defaults(func=cmd_vm_create)
     p = vm_sub.add_parser("start", help="boot a VM")
     p.add_argument("name")
-    p.add_argument("--console", action="store_true", help="open a viewer on the VM display")
+    p.add_argument("--console", action="store_true", help="show the VM's screen in a window")
     p.add_argument("--backend", choices=BACKENDS)
     p.set_defaults(func=cmd_vm_start)
     p = vm_sub.add_parser("stop", help="power a VM off")
